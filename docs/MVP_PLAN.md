@@ -12,6 +12,7 @@
 - [x] GitHub Actions: CI-сборка APK (debug) на каждый push
 - [x] API-ключ Yandex MapKit получен и добавлен в секреты CI (`YANDEX_MAPKIT_API_KEY`)
 - [x] Фикс CI: Java 21 + Gradle 8.14 + AGP 8.11.1 + Kotlin 2.2.20 (нативная библиотека MapKit собрана под class file 65 = Java 21)
+- [x] Фикс CI: explicit-зависимость `maps.mobile:4.39.1-lite` (плагин тянет её как implementation и не экспортирует в classpath app-модуля)
 
 ## Фаза 1. Telephony-слой
 - [x] Android permissions: `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE` в манифесте + рантайм-запрос (`PermissionService`)
@@ -22,14 +23,14 @@
 - [ ] Тест на реальном девайсе: данные приходят, поля не null
 
 ## Фаза 2. Карта
-- [ ] Подключить `yandex_mapkit`, инициализация ключа
-- [ ] `MapScreen`: спутниковый слой во весь экран
-- [ ] User location layer (точка + точность)
-- [ ] FAB: центрирование на GPS
-- [ ] Переключатель слоёв: спутник / гибрид
+- [x] Подключить `yandex_mapkit`, инициализация ключа (через BuildConfig в MainActivity)
+- [x] `MapScreen`: спутниковый слой во весь экран
+- [x] User location layer (точка + авто-зум)
+- [x] FAB: центрирование на GPS
+- [x] Переключатель слоёв: спутник / гибрид
 
 ## Фаза 3. Signal strip + текущая сота
-- [ ] Виджет signal strip: технология, band, PCI, RSRP с цветовой индикацией
+- [x] Виджет signal strip: технология, band, PCI, RSRP с цветовой индикацией
 - [ ] Индикаторы статуса: GPS-fix, запись трека
 - [ ] Тап по strip → экран Cell Details с таблицей параметров
 - [ ] Список соседних сот на экране деталей

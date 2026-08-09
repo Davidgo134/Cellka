@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'features/map_screen/map_screen.dart';
+
 void main() {
   runApp(const CellkaApp());
 }
@@ -20,30 +22,8 @@ class CellkaApp extends StatelessWidget {
         brightness: Brightness.dark,
         useMaterial3: true,
       ),
-      home: const _PlaceholderHome(),
-    );
-  }
-}
-
-class _PlaceholderHome extends StatelessWidget {
-  const _PlaceholderHome();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Cellka')),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: Text(
-            'Cellka: NetMonster/Cell Mapper alternative\n'
-            'со спутниковыми картами Yandex MapKit.\n\n'
-            'Экран карты и логика сбора данных о сотах '
-            'находятся в разработке — см. docs/ARCHITECTURE.md',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
+      themeMode: ThemeMode.dark, // тёмная тема по умолчанию (см. DESIGN.md)
+      home: const MapScreen(),
     );
   }
 }
