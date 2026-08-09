@@ -1,0 +1,35 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Android
+*.iml
+.gradle
+local.properties
+android/.gradle
+android/captures/
+android/app/debug
+android/app/profile
+android/app/release
+android/key.properties
+**/android/**/GeneratedPluginRegistrant.java
+
+# iOS
+ios/Flutter/.last_build_id
+ios/Pods/
+ios/.symlinks/
+*.xcworkspace
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Secrets
+**/local.properties
+**/*api_key*
