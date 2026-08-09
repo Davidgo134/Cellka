@@ -5,8 +5,9 @@ import '../../core/models/cell_info.dart';
 /// Формат заголовка: «LTE B7 · PCI 142 · -87 dBm».
 String formatCellTitle(CellInfo? cell) {
   if (cell == null) return 'Нет данных о соте';
-  final parts = <String>[cell.technology];
-  if (cell.band != null) parts.add('B${cell.band}');
+  final head =
+      cell.band != null ? '${cell.technology} B${cell.band}' : cell.technology;
+  final parts = <String>[head];
   if (cell.pci != null) parts.add('PCI ${cell.pci}');
   final dbm = cell.rsrp ?? cell.dbm;
   if (dbm != null) parts.add('$dbm dBm');
