@@ -62,6 +62,13 @@ android {
     }
 }
 
+dependencies {
+    // Явная зависимость: плагин yandex_mapkit тянет её как implementation и не
+    // экспортирует в classpath app-модуля, а нам нужен MapKitFactory в MainActivity.
+    // Версия должна совпадать с той, что использует плагин (см. лог сборки).
+    implementation "ru.yandex.android:maps.mobile:4.39.1-lite"
+}
+
 flutter {
     source = "../.."
 }
