@@ -8,9 +8,9 @@
 - [x] Репозиторий создан
 - [x] README, ARCHITECTURE.md, DESIGN.md
 - [x] Скелет Flutter-проекта (`main.dart`, модели)
-- [ ] `flutter create` — сгенерировать android/ios обвязку поверх скелета
-- [ ] GitHub Actions: CI-сборка APK (debug) на каждый push
-- [ ] Получить API-ключ Yandex MapKit, добавить в секреты CI
+- [x] Android-обвязка запушена (manifest, gradle, MainActivity с MapKit, ресурсы). Локально/в CI выполняется `flutter create` для gradle wrapper и иконок
+- [x] GitHub Actions: CI-сборка APK (debug) на каждый push
+- [ ] Получить API-ключ Yandex MapKit, добавить в секреты CI (`YANDEX_MAPKIT_API_KEY`)
 
 ## Фаза 1. Telephony-слой (самый рискованный — делаем первым)
 - [ ] Android permissions: `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE`, запрос в рантайме

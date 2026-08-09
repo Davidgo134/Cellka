@@ -19,37 +19,39 @@
 | Бесплатный лимит запросов | Выше для проектов в РФ/СНГ | Требует billing-аккаунт |
 | Легальность встраивания в приложение | Да, через официальный SDK | Да, через официальный SDK |
 | Глобальное покрытие вне СНГ | Слабее | Сильнее |
-| Интеграция с Flutter | Через официальный/community-плагин, нативные Kotlin/Swift биндинги | Готовый плагин `google_maps_flutter` |
+| Интеграция с Flutter | Пакет `yandex_mapkit` | Готовый плагин `google_maps_flutter` |
 
 Вывод: для аудитории в РФ/СНГ Yandex MapKit даёт лучшее качество снимков и более гибкие условия использования, поэтому выбран как основной провайдер карт. Слой карт вынесен в отдельный интерфейс (`MapProvider`), чтобы можно было подключить Google Maps или Mapbox как альтернативу для других регионов без переписывания всего приложения.
 
 ## Функциональность (roadmap)
 
-- [ ] Чтение данных о соте (LAC/TAC, CID, PCI, band, RSRP/RSRQ/RSSI/SINR) через `TelephonyManager` / `NetMonster Core`-подобный слой
+Прогресс по MVP отслеживается в [docs/MVP_PLAN.md](docs/MVP_PLAN.md).
+
+- [ ] Чтение данных о соте (LAC/TAC, CID, PCI, band, RSRP/RSRQ/RSSI/SINR) через `TelephonyManager`
 - [ ] Отображение текущей соты и соседних сот на спутниковой карте
 - [ ] Запись трека измерений с привязкой к GPS-координатам
 - [ ] Heatmap покрытия сети (по цвету — уровень сигнала)
-- [ ] База данных операторов/сот (offline, с возможностью community-пополнения)
 - [ ] Экспорт треков в GeoJSON/CSV
 - [ ] Тёмная тема, поддержка RU/EN
 
 ## Технологический стек
 
 - **Flutter** (Dart) — кроссплатформенный UI
-- **Yandex MapKit Mobile SDK** — спутниковые/гибридные карты
+- **Yandex MapKit Mobile SDK** (пакет `yandex_mapkit`) — спутниковые/гибридные карты
 - **Kotlin** (Android platform channel) — доступ к телефонии низкого уровня (`TelephonyManager`, `CellInfo`)
 - **sqflite** — локальное хранилище измерений
 - **geolocator** — GPS-трекинг
-- **provider / riverpod** — управление состоянием
+- **provider** — управление состоянием
 
 ## Структура проекта
 
 ```
 Cellka/
+├── .github/workflows/      # CI: analyze/test + сборка debug APK
 ├── android/                # нативный Android-код, доступ к TelephonyManager
 ├── lib/
 │   ├── core/
-│   │   ├── models/          # модели данных (CellInfo, MeasurementPoint)
+│   │   ├── models/          # модели данных (CellInfo)
 │   │   ├── map/              # абстракция MapProvider (Yandex/Google)
 │   │   └── storage/          # работа с sqflite
 │   ├── features/
@@ -58,7 +60,10 @@ Cellka/
 │   │   └── history/          # история измерений, экспорт
 │   └── main.dart
 ├── docs/
-│   └── ARCHITECTURE.md
+│   ├── ARCHITECTURE.md
+│   ├── DESIGN.md
+│   └── MVP_PLAN.md
+├── test/
 ├── pubspec.yaml
 └── README.md
 ```
@@ -68,11 +73,25 @@ Cellka/
 ```bash
 git clone https://github.com/Davidgo134/Cellka.git
 cd Cellka
+
+# Догенерировать недостающие файлы (gradle wrapper jar, иконки) —
+# существующие файлы не будут перезаписаны:
+flutter create --platforms=android --project-name cellka --org com.github.davidgo134 .
+
+# Прописать API-ключ Yandex MapKit (получить: https://developer.tech.yandex.ru/):
+echo "MAPKIT_API_KEY=ВАШ_КЛЮЧ" >> android/local.properties
+
 flutter pub get
 flutter run
 ```
 
-Для работы карт нужен API-ключ Yandex MapKit (получить в [кабинете разработчика Яндекса](https://developer.tech.yandex.ru/)). Ключ прописывается в `android/app/src/main/AndroidManifest.xml` и `ios/Runner/AppDelegate.swift` (см. `docs/ARCHITECTURE.md`).
+## CI
+
+Workflow [.github/workflows/android.yml](.github/workflows/android.yml) на каждый push в `main`:
+1. `flutter analyze` + `flutter test`
+2. Сборка debug APK → артефакт `cellka-debug-apk`
+
+Для сборки с рабочей картой добавьте секрет `YANDEX_MAPKIT_API_KEY` в Settings → Secrets and variables → Actions. Без секрета APK соберётся, но карта не загрузится.
 
 ## Лицензия
 
