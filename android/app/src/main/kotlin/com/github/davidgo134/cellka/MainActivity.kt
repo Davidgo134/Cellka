@@ -12,5 +12,6 @@ class MainActivity : FlutterActivity() {
             MapKitFactory.setApiKey(BuildConfig.MAPKIT_API_KEY)
         }
         super.configureFlutterEngine(flutterEngine)
+        CellInfoPlugin.registerWith(flutterEngine, applicationContext)
     }
 }

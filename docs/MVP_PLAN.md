@@ -10,14 +10,15 @@
 - [x] Скелет Flutter-проекта (`main.dart`, модели)
 - [x] Android-обвязка запушена (manifest, gradle, MainActivity с MapKit, ресурсы). Локально/в CI выполняется `flutter create` для gradle wrapper и иконок
 - [x] GitHub Actions: CI-сборка APK (debug) на каждый push
-- [ ] Получить API-ключ Yandex MapKit, добавить в секреты CI (`YANDEX_MAPKIT_API_KEY`)
+- [x] API-ключ Yandex MapKit получен и добавлен в секреты CI (`YANDEX_MAPKIT_API_KEY`)
+- [x] Фикс CI: Java 21 + Gradle 8.14 + AGP 8.11.1 + Kotlin 2.2.20 (нативная библиотека MapKit собрана под class file 65 = Java 21)
 
-## Фаза 1. Telephony-слой (самый рискованный — делаем первым)
-- [ ] Android permissions: `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE`, запрос в рантайме
-- [ ] Kotlin: `CellInfoPlugin` (MethodChannel `cellka/telephony`) — чтение `TelephonyManager.getAllCellInfo()`
-- [ ] Маппинг `CellInfoLte` → модель (TAC, CI, PCI, EARFCN, RSRP/RSRQ/RSSI)
-- [ ] Маппинг `CellInfoNr` (5G), `CellInfoWcdma`, `CellInfoGsm`
-- [ ] Dart-слой: `TelephonyService` + stream обновлений (polling 1с)
+## Фаза 1. Telephony-слой
+- [x] Android permissions: `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE` в манифесте + рантайм-запрос (`PermissionService`)
+- [x] Kotlin: `CellInfoPlugin` (MethodChannel `cellka/telephony`) — чтение `TelephonyManager.getAllCellInfo()` + `getOperatorInfo()`
+- [x] Маппинг `CellInfoLte` → модель (TAC, CI, PCI, EARFCN, RSRP/RSRQ/RSSI/SINR, TA, bandwidth)
+- [x] Маппинг `CellInfoNr` (5G), `CellInfoWcdma`, `CellInfoGsm` (+ CDMA, TD-SCDMA)
+- [x] Dart-слой: `TelephonyService` + polling-стрим (1с) + `BandMapper` (EARFCN→band) с юнит-тестами
 - [ ] Тест на реальном девайсе: данные приходят, поля не null
 
 ## Фаза 2. Карта
