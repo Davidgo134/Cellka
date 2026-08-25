@@ -6,6 +6,7 @@ import 'package:yandex_mapkit/yandex_mapkit.dart';
 
 import '../../core/models/cell_info.dart';
 import '../../core/permissions/permission_service.dart';
+import '../../core/recording/recording_service.dart';
 import '../../core/telephony/telephony_service.dart';
 import 'signal_strip.dart';
 
@@ -24,6 +25,7 @@ class _MapScreenState extends State<MapScreen> {
 
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
+  late final RecordingService _recorder;
 
   YandexMapController? _mapController;
   StreamSubscription<List<CellInfo>>? _cellsSub;
@@ -35,12 +37,41 @@ class _MapScreenState extends State<MapScreen> {
   bool _permissionsGranted = false;
   bool _hasFix = false;
   bool _autoMovedToUser = false;
-  final bool _isRecording = false; // будет переключаться в Фазе 4
+
+  bool get _isRecording => _recorder.isRecording;
 
   @override
   void initState() {
     super.initState();
+    _recorder = RecordingService(_telephony);
+    _recorder.addListener(_onRecorderChanged);
     _initPermissionsAndStream();
+  }
+
+  void _onRecorderChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_recorder.isRecording) {
+      await _recorder.stop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Трек сохранён: ${_recorder.pointCount} точек · '
+              '${_recorder.distanceM.round()} м',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (!_permissionsGranted) {
+      await _requestPermissions();
+      if (!_permissionsGranted) return;
+    }
+    await _recorder.start();
   }
 
   Future<void> _initPermissionsAndStream() async {
@@ -160,6 +191,8 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    _recorder.removeListener(_onRecorderChanged);
+    _recorder.dispose();
     _cellsSub?.cancel();
     _fixCheckTimer?.cancel();
     _mapController?.dispose();
@@ -224,6 +257,16 @@ class _MapScreenState extends State<MapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            FloatingActionButton.small(
+              heroTag: 'record',
+              tooltip: _isRecording ? 'Остановить запись' : 'Запись трека',
+              backgroundColor: _isRecording ? Colors.redAccent : null,
+              onPressed: _toggleRecording,
+              child: Icon(
+                _isRecording ? Icons.stop : Icons.fiber_manual_record,
+              ),
+            ),
+            const SizedBox(height: 12),
             FloatingActionButton.small(
               heroTag: 'layers',
               tooltip: 'Слой: гибрид / спутник',
