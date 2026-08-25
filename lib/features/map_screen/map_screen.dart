@@ -22,11 +22,14 @@ class _MapScreenState extends State<MapScreen> {
 
   YandexMapController? _mapController;
   StreamSubscription<List<CellInfo>>? _cellsSub;
+  Timer? _fixCheckTimer;
 
   MapType _mapType = MapType.satellite;
   CellInfo? _servingCell;
-  int _cellCount = 0;
+  List<CellInfo> _allCells = [];
   bool _permissionsGranted = false;
+  bool _hasFix = false;
+  final bool _isRecording = false; // будет переключаться в Фазе 4
 
   @override
   void initState() {
@@ -49,8 +52,20 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted) {
         setState(() {
           _servingCell = serving;
-          _cellCount = cells.length;
+          _allCells = cells;
         });
+      }
+    });
+
+    // Проверяем наличие GPS-фикса каждые 3 секунды
+    _fixCheckTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      final controller = _mapController;
+      if (controller == null) return;
+      try {
+        final pos = await controller.getUserCameraPosition();
+        if (mounted) setState(() => _hasFix = pos != null);
+      } catch (_) {
+        if (mounted) setState(() => _hasFix = false);
       }
     });
   }
@@ -87,6 +102,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _cellsSub?.cancel();
+    _fixCheckTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -115,9 +131,11 @@ class _MapScreenState extends State<MapScreen> {
             bottom: 16 + bottomPadding,
             child: SignalStrip(
               cell: _servingCell,
-              cellCount: _cellCount,
+              allCells: _allCells,
               permissionsGranted: _permissionsGranted,
               onRequestPermissions: _requestPermissions,
+              hasFix: _hasFix,
+              isRecording: _isRecording,
             ),
           ),
         ],
