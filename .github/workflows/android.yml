@@ -47,7 +47,7 @@ jobs:
       - name: Build debug APK
         env:
           MAPKIT_API_KEY: ${{ secrets.YANDEX_MAPKIT_API_KEY }}
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define=OPENCELLID_API_KEY=${{ secrets.OPENCELLID_API_KEY }}
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
