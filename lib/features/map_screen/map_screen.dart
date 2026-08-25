@@ -171,15 +171,15 @@ class _MapScreenState extends State<MapScreen> {
     final color = signalColor(serving.rsrp);
     setState(() {
       _mapObjects = [
-        CircleObject(
+        CircleMapObject(
           mapId: const MapObjectId('serving_tower'),
-          circle: MapCircle(center: towerPoint, radius: 25),
+          circle: Circle(center: towerPoint, radius: 25),
           fillColor: color.withValues(alpha: 0.35),
           strokeColor: color,
           strokeWidth: 2,
           zIndex: 2,
         ),
-        PolylineObject(
+        PolylineMapObject(
           mapId: const MapObjectId('serving_link'),
           polyline: Polyline(points: [userPoint, towerPoint]),
           strokeColor: color,

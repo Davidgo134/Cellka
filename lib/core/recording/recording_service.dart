@@ -1,11 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+// geolocator 12 реэкспортирует AndroidSettings/ForegroundNotificationConfig.
 import 'package:geolocator/geolocator.dart';
-// Прямой импорт платформенного пакета: AndroidSettings с конфигом
-// foreground-уведомления живёт здесь, а не в базовом geolocator.
-// ignore: depend_on_referenced_packages
-import 'package:geolocator_android/geolocator_android.dart';
 import 'package:uuid/uuid.dart';
 
 import '../db/track_repository.dart';
