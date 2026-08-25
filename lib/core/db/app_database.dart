@@ -2,13 +2,13 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 /// Локальная БД Cellka (sqflite).
-/// Схема v1: tracks + measurements + handovers.
+/// Схема v2: tracks + measurements + handovers + tower_cache.
 class AppDatabase {
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'cellka.db';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
 
   Database? _db;
 
@@ -90,8 +90,27 @@ class AppDatabase {
         await db.execute(
           'CREATE INDEX idx_handovers_track ON handovers(track_id)',
         );
+        await _createTowerCache(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await _createTowerCache(db);
+        }
       },
     );
+  }
+
+  Future<void> _createTowerCache(Database db) {
+    return db.execute('''
+      CREATE TABLE IF NOT EXISTS tower_cache(
+        cell_key TEXT PRIMARY KEY,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        range_m INTEGER,
+        samples INTEGER,
+        fetched_at TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<void> close() async {

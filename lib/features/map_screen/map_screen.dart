@@ -8,6 +8,7 @@ import '../../core/models/cell_info.dart';
 import '../../core/permissions/permission_service.dart';
 import '../../core/recording/recording_service.dart';
 import '../../core/telephony/telephony_service.dart';
+import '../../core/towers/tower_service.dart';
 import 'signal_strip.dart';
 
 /// Главный экран: карта Yandex + signal strip + FAB-стек.
@@ -25,6 +26,7 @@ class _MapScreenState extends State<MapScreen> {
 
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
+  final _towers = TowerService();
   late final RecordingService _recorder;
 
   YandexMapController? _mapController;
@@ -37,6 +39,11 @@ class _MapScreenState extends State<MapScreen> {
   bool _permissionsGranted = false;
   bool _hasFix = false;
   bool _autoMovedToUser = false;
+
+  /// Линия к обслуживающей вышке + её маркер.
+  List<MapObject> _mapObjects = [];
+  String? _lastTowerKey;
+  bool _keyWarned = false;
 
   bool get _isRecording => _recorder.isRecording;
 
@@ -98,6 +105,7 @@ class _MapScreenState extends State<MapScreen> {
           _servingCell = serving;
           _allCells = cells;
         });
+        _updateTowerLink(serving);
       }
     });
 
@@ -112,6 +120,86 @@ class _MapScreenState extends State<MapScreen> {
         if (mounted) setState(() => _hasFix = false);
       }
     });
+  }
+
+  /// Линия «пользователь → обслуживающая вышка» как в CellMapper.
+  /// Координаты вышки — из OpenCelliD (с локальным кэшем).
+  Future<void> _updateTowerLink(CellInfo? serving) async {
+    if (serving == null) {
+      _lastTowerKey = null;
+      if (_mapObjects.isNotEmpty && mounted) {
+        setState(() => _mapObjects = []);
+      }
+      return;
+    }
+
+    final key = '${serving.technology}:${serving.mcc}-${serving.mnc}:'
+        '${serving.tac ?? serving.lac}:${serving.ci ?? serving.nci}';
+    if (key == _lastTowerKey) return;
+    _lastTowerKey = key;
+
+    if (!_towers.hasKey) {
+      if (!_keyWarned && mounted) {
+        _keyWarned = true;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Нет ключа OpenCelliD — линия к вышке отключена',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final loc = await _towers.locate(serving);
+    if (!mounted || key != _lastTowerKey) return;
+    if (loc == null) {
+      // Соты нет в базе OpenCelliD — линию не рисуем.
+      setState(() => _mapObjects = []);
+      return;
+    }
+
+    final userPoint = await _userPoint();
+    if (!mounted || key != _lastTowerKey) return;
+    if (userPoint == null) {
+      setState(() => _mapObjects = []);
+      return;
+    }
+
+    final towerPoint = Point(latitude: loc.lat, longitude: loc.lon);
+    final color = signalColor(serving.rsrp);
+    setState(() {
+      _mapObjects = [
+        CircleObject(
+          mapId: const MapObjectId('serving_tower'),
+          circle: MapCircle(center: towerPoint, radius: 25),
+          fillColor: color.withValues(alpha: 0.35),
+          strokeColor: color,
+          strokeWidth: 2,
+          zIndex: 2,
+        ),
+        PolylineObject(
+          mapId: const MapObjectId('serving_link'),
+          polyline: Polyline(points: [userPoint, towerPoint]),
+          strokeColor: color,
+          strokeWidth: 3,
+          zIndex: 1,
+        ),
+      ];
+    });
+  }
+
+  Future<Point?> _userPoint() async {
+    try {
+      final cam = await _mapController?.getUserCameraPosition();
+      if (cam != null) return cam.target;
+    } catch (_) {}
+    try {
+      final p = await Geolocator.getLastKnownPosition();
+      if (p != null) return Point(latitude: p.latitude, longitude: p.longitude);
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _enableUserLayer() async {
@@ -209,6 +297,7 @@ class _MapScreenState extends State<MapScreen> {
           YandexMap(
             mapType: _mapType,
             nightModeEnabled: false,
+            mapObjects: _mapObjects,
             onMapCreated: (controller) async {
               _mapController = controller;
               // Стартовый вид: кэшированная позиция или центр Москвы,

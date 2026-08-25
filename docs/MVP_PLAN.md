@@ -44,6 +44,12 @@
 - [x] FAB start/stop записи + SnackBar со статистикой
 - [x] Логирование handover-событий (смена serving-соты)
 
+## Фаза 4.5. Линия к вышке (OpenCelliD)
+- [x] `TowerService`: OpenCelliD `cell/get` + sqflite-кэш `tower_cache` (схема БД v2)
+- [x] Линия пользователь→вышка + маркер-круг на карте, цвет по RSRP, обновление при handover
+- [ ] Ключ OpenCelliD: регистрация на opencellid.org → секрет `OPENCELLID_API_KEY` в CI + `--dart-define` в workflow
+- [ ] Массовый слой всех вышек в видимой области (bulk-дамп OpenCelliD, после MVP)
+
 ## Фаза 5. Отображение треков
 - [ ] Экран History: список треков (дата, дистанция, точки, оператор)
 - [ ] Отрисовка трека на карте, точки с цветом по RSRP
