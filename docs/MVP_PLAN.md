@@ -20,7 +20,7 @@
 - [x] Маппинг `CellInfoLte` → модель (TAC, CI, PCI, EARFCN, RSRP/RSRQ/RSSI/SINR, TA, bandwidth)
 - [x] Маппинг `CellInfoNr` (5G), `CellInfoWcdma`, `CellInfoGsm` (+ CDMA, TD-SCDMA)
 - [x] Dart-слой: `TelephonyService` + polling-стрим (1с) + `BandMapper` (EARFCN→band) с юнит-тестами
-- [ ] Тест на реальном девайсе: данные приходят, поля не null
+- [x] Тест на реальном девайсе: данные приходят, поля не null (LTE B1 · PCI 180 · RSRP −95 · TAC/CI живые, T2 250-20)
 
 ## Фаза 2. Карта
 - [x] Подключить `yandex_mapkit`, инициализация ключа (через BuildConfig в MainActivity)
