@@ -43,7 +43,9 @@ class _MapScreenState extends State<MapScreen> {
   /// Линия к обслуживающей вышке + её маркер.
   List<MapObject> _mapObjects = [];
   String? _lastTowerKey;
-  bool _keyWarned = false;
+  String? _lastErrorKey;
+  DateTime _lastErrorAt = DateTime.fromMillisecondsSinceEpoch(0);
+  final Set<String> _warned = {};
 
   bool get _isRecording => _recorder.isRecording;
 
@@ -136,32 +138,57 @@ class _MapScreenState extends State<MapScreen> {
     final key = '${serving.technology}:${serving.mcc}-${serving.mnc}:'
         '${serving.tac ?? serving.lac}:${serving.ci ?? serving.nci}';
     if (key == _lastTowerKey) return;
+    // После сетевой ошибки ретраим не чаще, чем раз в 30 с.
+    if (key == _lastErrorKey &&
+        DateTime.now().difference(_lastErrorAt) <
+            const Duration(seconds: 30)) {
+      return;
+    }
     _lastTowerKey = key;
 
-    if (!_towers.hasKey) {
-      if (!_keyWarned && mounted) {
-        _keyWarned = true;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Нет ключа OpenCelliD — линия к вышке отключена',
-            ),
-          ),
+    final result = await _towers.locate(serving);
+    if (!mounted || key != _lastTowerKey) return;
+
+    switch (result.status) {
+      case TowerLookupStatus.ok:
+        await _drawTowerLink(serving, result.location!);
+      case TowerLookupStatus.noKey:
+        _warnOnce('nokey', 'Нет ключа OpenCelliD — линия к вышке отключена');
+        setState(() => _mapObjects = []);
+      case TowerLookupStatus.invalidKey:
+        _warnOnce(
+          'badkey',
+          'OpenCelliD: ключ не принят (401) — проверь секрет в CI',
         );
-      }
-      return;
+        setState(() => _mapObjects = []);
+      case TowerLookupStatus.forbidden:
+        _warnOnce(
+          'forbidden',
+          'OpenCelliD: ключ не в белом списке (403). Лечится отправкой '
+          'замеров — добавим в следующей фазе',
+        );
+        setState(() => _mapObjects = []);
+      case TowerLookupStatus.notFound:
+        _warnOnce('notfound', 'Текущей соты нет в базе OpenCelliD');
+        setState(() => _mapObjects = []);
+      case TowerLookupStatus.error:
+        // Молча: ретрай через 30 с по троттлингу выше.
+        _lastTowerKey = null;
+        _lastErrorKey = key;
+        _lastErrorAt = DateTime.now();
     }
+  }
 
-    final loc = await _towers.locate(serving);
-    if (!mounted || key != _lastTowerKey) return;
-    if (loc == null) {
-      // Соты нет в базе OpenCelliD — линию не рисуем.
-      setState(() => _mapObjects = []);
-      return;
-    }
+  void _warnOnce(String id, String text) {
+    if (!mounted || !_warned.add(id)) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
+    );
+  }
 
+  Future<void> _drawTowerLink(CellInfo serving, TowerLocation loc) async {
     final userPoint = await _userPoint();
-    if (!mounted || key != _lastTowerKey) return;
+    if (!mounted) return;
     if (userPoint == null) {
       setState(() => _mapObjects = []);
       return;
