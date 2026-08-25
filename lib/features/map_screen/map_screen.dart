@@ -100,11 +100,11 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       Position? pos = await Geolocator.getLastKnownPosition();
+      // geolocator 12: getCurrentPosition принимает desiredAccuracy/timeLimit
+      // напрямую (locationSettings — только у getPositionStream).
       pos ??= await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 6),
-        ),
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 6),
       );
       _autoMovedToUser = true;
       await controller.moveCamera(
