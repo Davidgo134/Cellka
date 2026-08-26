@@ -33,9 +33,12 @@ jobs:
       - name: Publish to Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # --repo обязателен: checkout в job'е нет, gh без git-директории
+        # не знает целевой репозиторий.
         run: |
           gh release create towers-db \
+            --repo Davidgo134/Cellka \
             --title "Towers DB (MCC 250)" \
             --notes "OpenCelliD per-MCC dump 250.csv.gz. Data © OpenCelliD contributors, CC BY-SA 4.0. Source: https://opencellid.org" \
             --latest=false 250.csv.gz \
-          || gh release upload towers-db 250.csv.gz --clobber
+          || gh release upload towers-db 250.csv.gz --clobber --repo Davidgo134/Cellka
