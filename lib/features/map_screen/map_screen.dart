@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:yandex_mapkit/yandex_mapkit.dart';
@@ -155,7 +156,7 @@ class _MapScreenState extends State<MapScreen> {
 
   /// Загрузка вышек видимой области из локальной базы (после дампа).
   Future<void> _loadTowersInView() async {
-    if (!_towersEnabled || _towersCount == 0) return;
+    if (!_towersEnabled) return;
     final controller = _mapController;
     if (controller == null) return;
 
@@ -165,6 +166,10 @@ class _MapScreenState extends State<MapScreen> {
         if (_towerLayerObjects.isNotEmpty && mounted) {
           setState(() => _towerLayerObjects = []);
         }
+        return;
+      }
+      if (_towersCount == 0) {
+        _warnOnce('emptydb', 'База вышек пуста — скачай её в меню слоя');
         return;
       }
       final region = await controller.getVisibleRegion();
@@ -182,6 +187,9 @@ class _MapScreenState extends State<MapScreen> {
         mncs: _selectedMncs,
       );
       if (!mounted) return;
+
+      // Радиус в метрах по ярусам зума — иначе точки незаметны.
+      final radius = cam.zoom < 13 ? 60.0 : cam.zoom < 15 ? 25.0 : 12.0;
       setState(() {
         _towerLayerObjects = [
           for (final t in towers)
@@ -191,16 +199,23 @@ class _MapScreenState extends State<MapScreen> {
               ),
               circle: Circle(
                 center: Point(latitude: t.lat, longitude: t.lon),
-                radius: 8,
+                radius: radius,
               ),
-              fillColor: colorForMnc(t.mnc).withValues(alpha: 0.8),
-              strokeColor: Colors.transparent,
-              strokeWidth: 0,
+              fillColor: colorForMnc(t.mnc).withValues(alpha: 0.9),
+              strokeColor: Colors.white,
+              strokeWidth: 1.5,
               zIndex: 0,
             ),
         ];
       });
-    } catch (_) {}
+      _warnOnce(
+        'layercount',
+        'Вышек в области: ${towers.length} (база: $_towersCount)',
+      );
+    } catch (e, st) {
+      debugPrint('tower layer load failed: $e\n$st');
+      _warnOnce('layererror', 'Слой вышек: ошибка загрузки — $e');
+    }
   }
 
   // ─── Запись ───────────────────────────────────────────────────────────────
@@ -555,6 +570,8 @@ class _MapScreenState extends State<MapScreen> {
                 await _enableUserLayer();
                 await _moveToUser();
               }
+              // Если слой вышек включён — грузим сразу после создания карты.
+              _loadTowersInView();
             },
           ),
           Positioned(
