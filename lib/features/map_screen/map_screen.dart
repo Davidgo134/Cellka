@@ -15,6 +15,7 @@ import '../../core/towers/tower_download_service.dart';
 import '../../core/towers/tower_service.dart';
 import '../../core/towers/towers_repository.dart';
 import 'signal_strip.dart';
+import 'tower_info_sheet.dart';
 import 'tower_layer_sheet.dart';
 
 /// Главный экран: карта Yandex + signal strip + FAB-стек.
@@ -29,9 +30,6 @@ class _MapScreenState extends State<MapScreen> {
   /// Дефолтная точка (центр Москвы), если нет ни кэша позиции, ни фикса.
   static const _fallbackTarget =
       Point(latitude: 55.751244, longitude: 37.618423);
-
-  /// Минимальный зум для слоя вышек (иначе слишком плотно).
-  static const _towersMinZoom = 12.0;
 
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
@@ -60,10 +58,15 @@ class _MapScreenState extends State<MapScreen> {
 
   /// Слой вышек выбранных операторов.
   List<MapObject> _towerLayerObjects = [];
+  final Map<String, Tower> _towersById = {};
   bool _towersEnabled = false;
   Set<int> _selectedMncs = {};
   int _towersCount = 0;
   DateTime? _towersLoadedAt;
+
+  /// Последний загруженный bbox [south, north, west, east] — чтобы не
+  /// пересоздавать слой, пока камера внутри него (анти-мерцание).
+  List<double>? _lastQueryBbox;
 
   bool get _isRecording => _recorder.isRecording;
 
@@ -124,6 +127,7 @@ class _MapScreenState extends State<MapScreen> {
           setState(() {
             _towersEnabled = enabled;
             _selectedMncs = mncs;
+            _lastQueryBbox = null; // фильтр сменился — грузим заново
           });
           _saveTowerLayerSettings(enabled, mncs);
           if (enabled) {
@@ -145,10 +149,32 @@ class _MapScreenState extends State<MapScreen> {
             setState(() {
               _towersCount = count;
               _towersLoadedAt = DateTime.now();
+              _lastQueryBbox = null;
             });
             if (_towersEnabled) _loadTowersInView();
           }
           return count;
+        },
+      ),
+    );
+  }
+
+  void _showTowerInfo(Tower t) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => TowerInfoSheet(
+        tower: t,
+        onGoTo: () {
+          Navigator.pop(context);
+          _mapController?.moveCamera(
+            CameraUpdate.newCameraPosition(
+              CameraPosition(
+                target: Point(latitude: t.lat, longitude: t.lon),
+                zoom: 16.5,
+              ),
+            ),
+            animation: const MapAnimation(duration: 0.5),
+          );
         },
       ),
     );
@@ -162,8 +188,12 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       final cam = await controller.getCameraPosition();
-      if (cam.zoom < _towersMinZoom) {
-        if (_towerLayerObjects.isNotEmpty && mounted) {
+      // Гистерезис зума: показываем от 12, скрываем ниже 11 —
+      // иначе слой мигает на границе.
+      final shown = _towerLayerObjects.isNotEmpty;
+      final threshold = shown ? 11.0 : 12.0;
+      if (cam.zoom < threshold) {
+        if (shown && mounted) {
           setState(() => _towerLayerObjects = []);
         }
         return;
@@ -178,36 +208,59 @@ class _MapScreenState extends State<MapScreen> {
       // Запас 25% за края экрана — меньше дозагрузок при панорамировании.
       final latPad = (ne.latitude - sw.latitude) * 0.25;
       final lonPad = (ne.longitude - sw.longitude) * 0.25;
+      final south = sw.latitude - latPad;
+      final north = ne.latitude + latPad;
+      final west = sw.longitude - lonPad;
+      final east = ne.longitude + lonPad;
+
+      // Уже покрыто прошлой загрузкой — не пересоздаём слой.
+      final b = _lastQueryBbox;
+      if (b != null &&
+          shown &&
+          south >= b[0] &&
+          north <= b[1] &&
+          west >= b[2] &&
+          east <= b[3]) {
+        return;
+      }
 
       final towers = await _towersRepo.inBbox(
-        southLat: sw.latitude - latPad,
-        northLat: ne.latitude + latPad,
-        westLon: sw.longitude - lonPad,
-        eastLon: ne.longitude + lonPad,
+        southLat: south,
+        northLat: north,
+        westLon: west,
+        eastLon: east,
         mncs: _selectedMncs,
       );
       if (!mounted) return;
 
       // Радиус в метрах по ярусам зума — иначе точки незаметны.
       final radius = cam.zoom < 13 ? 60.0 : cam.zoom < 15 ? 25.0 : 12.0;
+      _towersById.clear();
       setState(() {
         _towerLayerObjects = [
           for (final t in towers)
-            CircleMapObject(
-              mapId: MapObjectId(
-                'tower_${t.radio}_${t.mnc}_${t.lat}_${t.lon}',
-              ),
-              circle: Circle(
-                center: Point(latitude: t.lat, longitude: t.lon),
-                radius: radius,
-              ),
-              fillColor: colorForMnc(t.mnc).withValues(alpha: 0.9),
-              strokeColor: Colors.white,
-              strokeWidth: 1.5,
-              zIndex: 0,
-            ),
+            () {
+              final id = 'tower_${t.radio}_${t.mnc}_${t.area}_${t.cell}';
+              _towersById[id] = t;
+              return CircleMapObject(
+                mapId: MapObjectId(id),
+                circle: Circle(
+                  center: Point(latitude: t.lat, longitude: t.lon),
+                  radius: radius,
+                ),
+                fillColor: colorForMnc(t.mnc).withValues(alpha: 0.9),
+                strokeColor: Colors.white,
+                strokeWidth: 1.5,
+                zIndex: 0,
+                onTap: (self, point) {
+                  final tower = _towersById[self.mapId.value];
+                  if (tower != null) _showTowerInfo(tower);
+                },
+              );
+            }(),
         ];
       });
+      _lastQueryBbox = [south, north, west, east];
       _warnOnce(
         'layercount',
         'Вышек в области: ${towers.length} (база: $_towersCount)',

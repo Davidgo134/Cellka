@@ -7,18 +7,26 @@ import '../db/app_database.dart';
 class Tower {
   final String radio;
   final int mnc;
+  final int area; // TAC (LTE/NR) или LAC
+  final int cell; // Cell ID
   final double lat;
   final double lon;
   final int? range;
   final int? samples;
+  final int? updated; // unix-секунды последнего наблюдения в OpenCelliD
+  final int? changeable; // 1 — позиция вычислена из замеров
 
   const Tower({
     required this.radio,
     required this.mnc,
+    required this.area,
+    required this.cell,
     required this.lat,
     required this.lon,
     this.range,
     this.samples,
+    this.updated,
+    this.changeable,
   });
 }
 
@@ -45,6 +53,14 @@ Color colorForMnc(int? mnc) {
     if (op.mnc == mnc) return op.color;
   }
   return Colors.grey;
+}
+
+/// Имя оператора по MNC (РФ).
+String operatorNameForMnc(int? mnc) {
+  for (final op in kRuOperators) {
+    if (op.mnc == mnc) return op.name;
+  }
+  return mnc != null ? 'MNC $mnc' : '—';
 }
 
 /// Доступ к локальному справочнику вышек.
@@ -75,7 +91,10 @@ class TowersRepository {
     }
     final rows = await db.query(
       'towers',
-      columns: ['radio', 'mnc', 'lat', 'lon', 'range', 'samples'],
+      columns: [
+        'radio', 'mnc', 'area', 'cell', 'lat', 'lon',
+        'range', 'samples', 'updated', 'changeable',
+      ],
       where: where.toString(),
       whereArgs: args,
       orderBy: 'samples DESC',
@@ -86,10 +105,14 @@ class TowersRepository {
           (r) => Tower(
             radio: r['radio'] as String,
             mnc: (r['mnc'] as num).toInt(),
+            area: (r['area'] as num).toInt(),
+            cell: (r['cell'] as num).toInt(),
             lat: (r['lat'] as num).toDouble(),
             lon: (r['lon'] as num).toDouble(),
             range: (r['range'] as num?)?.toInt(),
             samples: (r['samples'] as num?)?.toInt(),
+            updated: (r['updated'] as num?)?.toInt(),
+            changeable: (r['changeable'] as num?)?.toInt(),
           ),
         )
         .toList();
