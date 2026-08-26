@@ -74,30 +74,38 @@ class BandMapper {
     1800: 'GSM 1800',
   };
 
-  /// Band по технологии и каналу. Для LTE — EARFCN, NR — NRARFCN,
-  /// WCDMA — UARFCN, GSM — ARFCN (900/1800).
-  static int? bandFor(String technology, int? channel) {
-    if (channel == null) return null;
+  /// Band по технологии и её каналу: LTE → earfcn, NR → nrarfcn,
+  /// WCDMA → uarfcn, GSM → arfcn (900/1800).
+  static int? bandFor({
+    String? technology,
+    int? earfcn,
+    int? nrarfcn,
+    int? uarfcn,
+    int? arfcn,
+  }) {
     switch (technology) {
       case 'NR':
+        if (nrarfcn == null) return null;
         for (final r in _nrBands) {
-          if (channel >= r[1] && channel <= r[2]) return r[0].toInt();
+          if (nrarfcn >= r[1] && nrarfcn <= r[2]) return r[0].toInt();
         }
         return null;
       case 'WCDMA':
+        if (uarfcn == null) return null;
         for (final r in _wcdmaBands) {
-          if (channel >= r[1] && channel <= r[2]) return r[0].toInt();
+          if (uarfcn >= r[1] && uarfcn <= r[2]) return r[0].toInt();
         }
         return null;
       case 'GSM':
-        if ((channel >= 1 && channel <= 124) ||
-            (channel >= 975 && channel <= 1023)) {
+        if (arfcn == null) return null;
+        if ((arfcn >= 1 && arfcn <= 124) ||
+            (arfcn >= 975 && arfcn <= 1023)) {
           return 900;
         }
-        if (channel >= 512 && channel <= 885) return 1800;
+        if (arfcn >= 512 && arfcn <= 885) return 1800;
         return null;
       default: // LTE и прочие
-        return bandForEarfcn(channel);
+        return bandForEarfcn(earfcn);
     }
   }
 
