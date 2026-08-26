@@ -1,186 +1,89 @@
-/// Модель информации о базовой станции сотовой сети,
-/// полученной через TelephonyManager (Android).
+/// Модель соты из TelephonyManager (через CellInfoPlugin).
 class CellInfo {
-  final String technology; // GSM / UMTS / LTE / NR / TDSCDMA / CDMA
-  final bool registered; // true — обслуживающая сота, false — соседняя
+  /// LTE, NR, WCDMA, GSM, CDMA, TD-SCDMA.
+  final String technology;
+  final bool registered;
+
   final int? mcc;
   final int? mnc;
-  final int? lac; // LAC (GSM/UMTS)
-  final int? tac; // TAC (LTE/NR)
-  final int? ci; // Cell ID
-  final int? nci; // NR Cell Identity (5G)
-  final int? pci; // Physical Cell ID (LTE/NR)
-  final int? psc; // Primary Scrambling Code (UMTS)
-  final int? bsic; // Base Station Identity Code (GSM)
-  final int? earfcn; // LTE
-  final int? nrarfcn; // NR
-  final int? uarfcn; // UMTS
-  final int? arfcn; // GSM
-  final int? band; // вычисляется BandMapper'ом на Dart-стороне
-  final int? bandwidth; // Гц (LTE, API 28+)
+  final int? tac;
+  final int? lac;
+
+  /// 28-битный LTE Cell Identity.
+  final int? ci;
+
+  /// 36-битный NR Cell Identity.
+  final int? nci;
+  final int? pci;
+  final int? earfcn;
+
   final int? rsrp;
   final int? rsrq;
+
+  /// Широкополосный RSSI (API 29+, может быть null на старых).
   final int? rssi;
   final int? sinr;
-  final int? dbm;
-  final int? asu;
-  final int? ta; // Timing Advance
-  final DateTime timestamp;
-  final double? latitude; // заполняется при записи трека
-  final double? longitude;
+
+  /// Timing advance.
+  final int? ta;
+
+  /// Ширина канала, кГц.
+  final int? bandwidth;
+
+  final String? operator;
 
   const CellInfo({
     required this.technology,
-    this.registered = false,
+    required this.registered,
     this.mcc,
     this.mnc,
-    this.lac,
     this.tac,
+    this.lac,
     this.ci,
     this.nci,
     this.pci,
-    this.psc,
-    this.bsic,
     this.earfcn,
-    this.nrarfcn,
-    this.uarfcn,
-    this.arfcn,
-    this.band,
-    this.bandwidth,
     this.rsrp,
     this.rsrq,
     this.rssi,
     this.sinr,
-    this.dbm,
-    this.asu,
     this.ta,
-    required this.timestamp,
-    this.latitude,
-    this.longitude,
+    this.bandwidth,
+    this.operator,
   });
 
-  /// Из данных MethodChannel (платформенная сторона Android).
-  factory CellInfo.fromMap(Map<String, dynamic> map) => CellInfo(
-        technology: map['technology'] as String? ?? 'UNKNOWN',
-        registered: map['registered'] as bool? ?? false,
-        mcc: _int(map['mcc']),
-        mnc: _int(map['mnc']),
-        lac: _int(map['lac']),
-        tac: _int(map['tac']),
-        ci: _int(map['ci']),
-        nci: _int(map['nci']),
-        pci: _int(map['pci']),
-        psc: _int(map['psc']),
-        bsic: _int(map['bsic']),
-        earfcn: _int(map['earfcn']),
-        nrarfcn: _int(map['nrarfcn']),
-        uarfcn: _int(map['uarfcn']),
-        arfcn: _int(map['arfcn']),
-        bandwidth: _int(map['bandwidth']),
-        rsrp: _int(map['rsrp']),
-        rsrq: _int(map['rsrq']),
-        rssi: _int(map['rssi']),
-        sinr: _int(map['sinr']),
-        dbm: _int(map['dbm']),
-        asu: _int(map['asu']),
-        ta: _int(map['ta']),
-        timestamp: DateTime.now(),
-      );
+  factory CellInfo.fromMap(Map<dynamic, dynamic> map) {
+    int? toInt(Object? v) =>
+        v is int ? v : int.tryParse(v?.toString() ?? '');
+    return CellInfo(
+      technology: map['type']?.toString() ?? 'unknown',
+      registered: map['registered'] == true,
+      mcc: toInt(map['mcc']),
+      mnc: toInt(map['mnc']),
+      tac: toInt(map['tac']),
+      lac: toInt(map['lac']),
+      ci: toInt(map['ci']),
+      nci: toInt(map['nci']),
+      pci: toInt(map['pci']),
+      earfcn: toInt(map['earfcn']),
+      rsrp: toInt(map['rsrp']),
+      rsrq: toInt(map['rsrq']),
+      rssi: toInt(map['rssi']),
+      sinr: toInt(map['sinr']),
+      ta: toInt(map['ta']),
+      bandwidth: toInt(map['bandwidth']),
+      operator: map['operator']?.toString(),
+    );
+  }
 
-  static int? _int(Object? v) => v is num ? v.toInt() : null;
+  /// Основной уровень сигнала для цветовой индикации.
+  int? get dbm => rsrp ?? rssi;
 
-  CellInfo copyWith({
-    int? band,
-    double? latitude,
-    double? longitude,
-  }) =>
-      CellInfo(
-        technology: technology,
-        registered: registered,
-        mcc: mcc,
-        mnc: mnc,
-        lac: lac,
-        tac: tac,
-        ci: ci,
-        nci: nci,
-        pci: pci,
-        psc: psc,
-        bsic: bsic,
-        earfcn: earfcn,
-        nrarfcn: nrarfcn,
-        uarfcn: uarfcn,
-        arfcn: arfcn,
-        band: band ?? this.band,
-        bandwidth: bandwidth,
-        rsrp: rsrp,
-        rsrq: rsrq,
-        rssi: rssi,
-        sinr: sinr,
-        dbm: dbm,
-        asu: asu,
-        ta: ta,
-        timestamp: timestamp,
-        latitude: latitude ?? this.latitude,
-        longitude: longitude ?? this.longitude,
-      );
+  /// eNodeB ID из LTE CI (старшие 20 бит), как у CellMapper.
+  int? get eNbId =>
+      technology == 'LTE' && ci != null ? ci! >> 8 : null;
 
-  Map<String, dynamic> toJson() => {
-        'technology': technology,
-        'registered': registered,
-        'mcc': mcc,
-        'mnc': mnc,
-        'lac': lac,
-        'tac': tac,
-        'ci': ci,
-        'nci': nci,
-        'pci': pci,
-        'psc': psc,
-        'bsic': bsic,
-        'earfcn': earfcn,
-        'nrarfcn': nrarfcn,
-        'uarfcn': uarfcn,
-        'arfcn': arfcn,
-        'band': band,
-        'bandwidth': bandwidth,
-        'rsrp': rsrp,
-        'rsrq': rsrq,
-        'rssi': rssi,
-        'sinr': sinr,
-        'dbm': dbm,
-        'asu': asu,
-        'ta': ta,
-        'timestamp': timestamp.toIso8601String(),
-        'latitude': latitude,
-        'longitude': longitude,
-      };
-
-  factory CellInfo.fromJson(Map<String, dynamic> json) => CellInfo(
-        technology: json['technology'] as String,
-        registered: json['registered'] as bool? ?? false,
-        mcc: json['mcc'] as int?,
-        mnc: json['mnc'] as int?,
-        lac: json['lac'] as int?,
-        tac: json['tac'] as int?,
-        ci: json['ci'] as int?,
-        nci: json['nci'] as int?,
-        pci: json['pci'] as int?,
-        psc: json['psc'] as int?,
-        bsic: json['bsic'] as int?,
-        earfcn: json['earfcn'] as int?,
-        nrarfcn: json['nrarfcn'] as int?,
-        uarfcn: json['uarfcn'] as int?,
-        arfcn: json['arfcn'] as int?,
-        band: json['band'] as int?,
-        bandwidth: json['bandwidth'] as int?,
-        rsrp: json['rsrp'] as int?,
-        rsrq: json['rsrq'] as int?,
-        rssi: json['rssi'] as int?,
-        sinr: json['sinr'] as int?,
-        dbm: json['dbm'] as int?,
-        asu: json['asu'] as int?,
-        ta: json['ta'] as int?,
-        timestamp: DateTime.parse(json['timestamp'] as String),
-        latitude: (json['latitude'] as num?)?.toDouble(),
-        longitude: (json['longitude'] as num?)?.toDouble(),
-      );
+  /// Номер сектора из LTE CI (младшие 8 бит).
+  int? get sectorId =>
+      technology == 'LTE' && ci != null ? ci! & 0xFF : null;
 }

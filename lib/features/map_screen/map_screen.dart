@@ -75,6 +75,9 @@ class _MapScreenState extends State<MapScreen> {
   DateTime _lastErrorAt = DateTime.fromMillisecondsSinceEpoch(0);
   final Set<String> _warned = {};
 
+  /// Постоянный статус вышки (нет в базе / оценка) — чип над signal strip.
+  String? _towerStatusNote;
+
   /// Слой вышек выбранных операторов.
   List<Marker> _towerMarkers = [];
   bool _towersEnabled = false;
@@ -460,10 +463,13 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _updateTowerLink(CellInfo? serving) async {
     if (serving == null) {
       _lastTowerKey = null;
-      if ((_linkMarkers.isNotEmpty || _linkLines.isNotEmpty) && mounted) {
+      if ((_linkMarkers.isNotEmpty || _linkLines.isNotEmpty ||
+              _towerStatusNote != null) &&
+          mounted) {
         setState(() {
           _linkMarkers = [];
           _linkLines = [];
+          _towerStatusNote = null;
         });
       }
       return;
@@ -480,20 +486,28 @@ class _MapScreenState extends State<MapScreen> {
     }
     _lastTowerKey = key;
 
+    // Сота сменилась — старая линия недействительна, стираем сразу.
+    if (_linkLines.isNotEmpty || _linkMarkers.isNotEmpty) {
+      _clearLink();
+    }
+
     final result = await _towers.locate(serving);
     if (!mounted || key != _lastTowerKey) return;
 
     switch (result.status) {
       case TowerLookupStatus.ok:
+        _towerStatusNote = null;
         await _drawTowerLink(serving, result.location!);
       case TowerLookupStatus.noKey:
         _warnOnce('nokey', 'Нет ключа OpenCelliD — линия к вышке отключена');
+        _towerStatusNote = null;
         _clearLink();
       case TowerLookupStatus.invalidKey:
         _warnOnce(
           'badkey',
           'OpenCelliD: ключ не принят (401) — проверь секрет в CI',
         );
+        _towerStatusNote = null;
         _clearLink();
       case TowerLookupStatus.forbidden:
         _warnOnce(
@@ -501,6 +515,7 @@ class _MapScreenState extends State<MapScreen> {
           'OpenCelliD: ключ не в белом списке (403). Лечится отправкой '
           'замеров — диалог при старте записи',
         );
+        _towerStatusNote = null;
         _clearLink();
       case TowerLookupStatus.notFound:
         // Соты нет в базе — пробуем собственную оценку позиции.
@@ -519,6 +534,10 @@ class _MapScreenState extends State<MapScreen> {
             TowerLocation(lat: est.lat, lon: est.lon),
             estimated: true,
           );
+          setState(() {
+            _towerStatusNote =
+                'Оценка позиции вышки (${est.samples} замеров)';
+          });
         } else {
           _warnOnce(
             'notfound',
@@ -526,6 +545,10 @@ class _MapScreenState extends State<MapScreen> {
             'после ≥5 замеров с ней',
           );
           _clearLink();
+          setState(() {
+            _towerStatusNote =
+                'Вышки нет в базе · оценка после ≥5 замеров';
+          });
         }
       case TowerLookupStatus.error:
         // Молча: ретрай через 30 с по троттлингу выше.
@@ -750,6 +773,41 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
+          // Статус вышки: нет в базе / оценочная позиция.
+          if (_towerStatusNote != null)
+            Positioned(
+              left: 12,
+              bottom: 92 + bottomPadding,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.cell_tower,
+                      size: 14,
+                      color: Colors.white70,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _towerStatusNote!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Positioned(
             left: 12,
             right: 12,
