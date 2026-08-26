@@ -4,15 +4,18 @@ import 'dart:io';
 
 import 'towers_repository.dart';
 
-/// Загрузка bulk-дампа OpenCelliD для России (MCC 250) и импорт
-/// в локальную таблицу towers. Данные © OpenCelliD, CC BY-SA 4.0.
+/// Загрузка базы вышек России (MCC 250) и импорт в таблицу towers.
+/// Источник 1 — наше зеркало в GitHub Release (обновляет CI, без лимитов);
+/// источник 2 (фолбэк) — OpenCelliD напрямую (лимит 2 скачивания/сутки).
+/// Данные © OpenCelliD contributors, CC BY-SA 4.0.
 ///
 /// Формат CSV: radio,mcc,net,area,cell,unit,lon,lat,range,samples,
 /// changeable,created,updated,averageSignal
 class TowerDownloadService {
   static const _apiKey =
       String.fromEnvironment('OPENCELLID_API_KEY', defaultValue: '');
-  static const _host = 'opencellid.org';
+  static const _mirrorUrl =
+      'https://github.com/Davidgo134/Cellka/releases/download/towers-db/250.csv.gz';
   static const _mccFile = '250.csv.gz';
   static const _batchSize = 1000;
 
@@ -22,30 +25,58 @@ class TowerDownloadService {
   bool get hasKey => _apiKey.isNotEmpty;
 
   /// Скачать и импортировать дамп. [onProgress] получает человекочитаемый
-  /// статус («3,2 МБ…», «Импорт: 45 000…»). Возвращает число вышек.
+  /// статус. Ошибки — с понятным текстом для показа в UI.
   Future<int> downloadAndImport({
     void Function(String status)? onProgress,
   }) async {
-    if (!hasKey) throw StateError('Нет ключа OpenCelliD');
+    try {
+      return await _importFrom(_mirrorUrl, onProgress: onProgress);
+    } catch (e) {
+      if (_apiKey.isEmpty) rethrow;
+      onProgress?.call('Зеркало недоступно, пробую OpenCelliD…');
+      final uri = Uri.https('opencellid.org', '/downloads.php', {
+        'token': _apiKey,
+        'type': 'mcc',
+        'file': _mccFile,
+      });
+      return _importFrom(uri.toString(), onProgress: onProgress);
+    }
+  }
 
-    final uri = Uri.https(_host, '/downloads.php', {
-      'token': _apiKey,
-      'type': 'mcc',
-      'file': _mccFile,
-    });
-    final req = await _http.getUrl(uri);
+  Future<int> _importFrom(
+    String url, {
+    void Function(String status)? onProgress,
+  }) async {
+    final req = await _http.getUrl(Uri.parse(url));
+    req.headers.set(
+      HttpHeaders.userAgentHeader,
+      'Cellka/0.1 (+github.com/Davidgo134/Cellka)',
+    );
     final res = await req.close();
     if (res.statusCode != 200) {
-      throw HttpException('HTTP ${res.statusCode}', uri: uri);
+      throw HttpException(
+        'HTTP ${res.statusCode} при скачивании базы',
+        uri: Uri.parse(url),
+      );
     }
 
     var received = 0;
     var imported = 0;
+    var checkedMagic = false;
     var batch = <Map<String, Object?>>[];
     var isHeader = true;
 
     final byteStream = res.map((chunk) {
       received += chunk.length;
+      if (!checkedMagic) {
+        checkedMagic = true;
+        // gzip-сигнатура 1F 8B; иначе сервер вернул HTML/ошибку.
+        if (chunk.length < 2 || chunk[0] != 0x1F || chunk[1] != 0x8B) {
+          throw const FormatException(
+            'Сервер вернул не gzip-файл (возможно, страницу ошибки)',
+          );
+        }
+      }
       if (received % (512 * 1024) < 8192) {
         onProgress?.call(
           'Скачано ${(received / 1048576).toStringAsFixed(1)} МБ…',

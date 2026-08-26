@@ -1,0 +1,35 @@
+name: Towers DB
+
+# Зеркало базы вышек OpenCelliD (MCC 250) в GitHub Release.
+# Запуск: вручную из Actions или по расписанию (понедельник 03:00 UTC).
+# Данные © OpenCelliD contributors, CC BY-SA 4.0 — атрибуция в приложении.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-towers-db:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download OpenCelliD MCC-250 dump
+        env:
+          OCID_TOKEN: ${{ secrets.OPENCELLID_API_KEY }}
+        run: |
+          curl -fL --retry 3 -o 250.csv.gz \
+            "https://opencellid.org/downloads.php?token=${OCID_TOKEN}&type=mcc&file=250.csv.gz"
+          ls -lh 250.csv.gz
+          head -c 2 250.csv.gz | xxd | grep -q '1f8b' && echo 'gzip OK'
+      - name: Publish to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create towers-db \
+            --title "Towers DB (MCC 250)" \
+            --notes "OpenCelliD per-MCC dump 250.csv.gz. Data © OpenCelliD contributors, CC BY-SA 4.0. Source: https://opencellid.org" \
+            --latest=false 250.csv.gz \
+          || gh release upload towers-db 250.csv.gz --clobber

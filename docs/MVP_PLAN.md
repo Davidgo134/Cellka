@@ -58,9 +58,11 @@
 
 ## Фаза 4.7. Слой вышек по операторам
 - [x] Схема БД v4: таблица `towers` (radio/mcc/mnc/area/cell + координаты + samples), индексы по lat/lon
-- [x] `TowerDownloadService`: скачивание дампа MCC 250 (`downloads.php?type=mcc&file=250.csv.gz`) стримом → gunzip на лету → парсинг CSV → batch-вставка по 1000, прогресс в UI
+- [x] `TowerDownloadService`: скачивание дампа MCC 250 стримом → gunzip на лету → парсинг CSV → batch-вставка по 1000, прогресс в UI
 - [x] `TowerLayerSheet` (FAB «вышка»): мастер-переключатель, чекбоксы операторов РФ с цветами, статус базы, атрибуция OpenCelliD (CC BY-SA)
 - [x] Вьюпорт-загрузка: `onCameraPositionChanged(finished)` → `getVisibleRegion` + запас 25% → кружки по цвету оператора; слой скрыт при зуме < 12
+- [x] Диагностика загрузки: реальный текст ошибки в шите, User-Agent, проверка gzip-сигнатуры
+- [x] Зеркало базы: workflow `towers_db.yml` (ручной/еженедельный запуск) скачивает дамп и публикует в GitHub Release `towers-db`; приложение качает с GitHub, OpenCelliD — фолбэк
 - [ ] Тап по вышке → карточка (radio, оператор, samples) — после MVP
 
 ## Фаза 5. Отображение треков

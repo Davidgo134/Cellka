@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/towers/towers_repository.dart';
 
 /// Bottom sheet слоя вышек: мастер-переключатель, чекбоксы операторов,
-/// загрузка/обновление базы OpenCelliD с прогрессом.
+/// загрузка/обновление базы с прогрессом и текстом ошибки.
 class TowerLayerSheet extends StatefulWidget {
   final bool enabled;
   final Set<int> selectedMncs;
@@ -152,8 +152,12 @@ class _TowerLayerSheetState extends State<TowerLayerSheet> {
       await widget.onDownload((s) {
         if (mounted) setState(() => _progress = s);
       });
-    } catch (_) {
-      if (mounted) setState(() => _progress = 'Ошибка загрузки');
+    } catch (e) {
+      if (mounted) {
+        var msg = e.toString();
+        if (msg.length > 140) msg = '${msg.substring(0, 140)}…';
+        setState(() => _progress = 'Ошибка: $msg');
+      }
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
