@@ -4,10 +4,9 @@ import 'dart:io';
 
 import '../db/track_repository.dart';
 
-/// Опт-in отправка записанных замеров в OpenCelliD (measure/uploadJson).
-/// Наполняет открытую базу (в т.ч. добавляет соты, которых там нет)
-/// и «белеет» API-ключ: cell/get и getInArea доступны только
-/// приложениям, которые делятся данными.
+/// Опт-in отправка записанных замеров в OpenCelliD.
+/// Основной путь — bulk `measure/uploadJson`; при 403 — фолбэк на
+/// точечный `measure/add` (он не требует белого ключа).
 class OpenCelliDUploader {
   static const _apiKey =
       String.fromEnvironment('OPENCELLID_API_KEY', defaultValue: '');
@@ -15,11 +14,10 @@ class OpenCelliDUploader {
   static const _timeout = Duration(seconds: 30);
 
   final TrackRepository _repo = TrackRepository();
-  final HttpClient _http = HttpClient()..connectionTimeout = _timeout;
+  final HttpClient _http = HttpClient();
 
   bool get hasKey => _apiKey.isNotEmpty;
 
-  /// Наша технология → act OpenCelliD.
   static const _actMap = {
     'GSM': 'GSM',
     'UMTS': 'UMTS',
@@ -29,17 +27,16 @@ class OpenCelliDUploader {
     'TDSCDMA': 'TDSCDMA',
   };
 
-  /// Отправить все валидные точки трека одним JSON-файлом.
-  /// true — сервер принял (HTTP 200).
-  Future<bool> uploadTrack(String trackId) async {
-    if (!hasKey) return false;
+  /// null — успех; иначе человекочитаемая ошибка для UI.
+  Future<String?> uploadTrack(String trackId) async {
+    if (!hasKey) return 'нет ключа OpenCelliD';
     final rows = await _repo.measurementsForUpload(trackId);
     final items = <Map<String, Object?>>[];
     for (final r in rows) {
       final m = _toMeasurement(r);
       if (m != null) items.add(m);
     }
-    if (items.isEmpty) return false;
+    if (items.isEmpty) return 'нет валидных точек с координатами';
 
     try {
       final payload = utf8.encode(jsonEncode({'measurements': items}));
@@ -66,11 +63,42 @@ class OpenCelliDUploader {
       );
       req.add(body);
       final res = await req.close().timeout(_timeout);
-      await res.drain<void>();
-      return res.statusCode == 200;
-    } catch (_) {
-      return false;
+      final code = res.statusCode;
+      final text = await res.transform(utf8.decoder).join().timeout(_timeout);
+      if (code == 200) return null;
+      if (code == 403) {
+        // Белый ключ нужен для чтения, но вклад принимают и без него —
+        // пробуем точечный measure/add для первых 20 точек.
+        final ok = await _addSingle(items);
+        return ok ? null : '403: ключ отклонён и на measure/add';
+      }
+      final short = text.length > 60 ? '${text.substring(0, 60)}…' : text;
+      return 'HTTP $code: $short';
+    } on TimeoutException {
+      return 'таймаут (проверь VPN/сеть)';
+    } catch (e) {
+      return '$e';
     }
+  }
+
+  /// Точечная отправка — эндпоинт вклада, не требующий белого ключа.
+  Future<bool> _addSingle(List<Map<String, Object?>> items) async {
+    var ok = 0;
+    final limit = items.length > 20 ? 20 : items.length;
+    for (var i = 0; i < limit; i++) {
+      try {
+        final params = <String, String>{'key': _apiKey};
+        items[i].forEach((k, v) {
+          if (v != null) params[k] = '$v';
+        });
+        final req = await _http.getUrl(Uri.https(_host, '/measure/add', params));
+        final res = await req.close().timeout(const Duration(seconds: 10));
+        await res.drain<void>();
+        if (res.statusCode == 200) ok++;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      } catch (_) {}
+    }
+    return ok > 0;
   }
 
   Map<String, Object?>? _toMeasurement(Map<String, Object?> r) {

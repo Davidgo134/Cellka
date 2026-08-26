@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:yandex_mapkit/yandex_mapkit.dart';
 
 import '../../core/db/track_repository.dart';
@@ -14,6 +15,7 @@ import '../../core/towers/cell_estimator.dart';
 import '../../core/towers/tower_download_service.dart';
 import '../../core/towers/tower_service.dart';
 import '../../core/towers/towers_repository.dart';
+import '../history/history_screen.dart';
 import 'signal_strip.dart';
 import 'tower_info_sheet.dart';
 import 'tower_layer_sheet.dart';
@@ -63,10 +65,12 @@ class _MapScreenState extends State<MapScreen> {
   Set<int> _selectedMncs = {};
   int _towersCount = 0;
   DateTime? _towersLoadedAt;
-
-  /// Последний загруженный bbox [south, north, west, east] — чтобы не
-  /// пересоздавать слой, пока камера внутри него (анти-мерцание).
   List<double>? _lastQueryBbox;
+
+  /// Heatmap собственных замеров.
+  List<MapObject> _measurementObjects = [];
+  bool _showMeasurements = false;
+  List<double>? _lastMeasBbox;
 
   bool get _isRecording => _recorder.isRecording;
 
@@ -76,24 +80,26 @@ class _MapScreenState extends State<MapScreen> {
     _recorder = RecordingService(_telephony);
     _recorder.addListener(_onRecorderChanged);
     _initPermissionsAndStream();
-    _loadTowerLayerSettings();
+    _loadLayerSettings();
   }
 
   void _onRecorderChanged() {
     if (mounted) setState(() {});
   }
 
-  // ─── Слой вышек ──────────────────────────────────────────────────────────
+  // ─── Слои карты ───────────────────────────────────────────────────────────
 
-  Future<void> _loadTowerLayerSettings() async {
+  Future<void> _loadLayerSettings() async {
     final repo = TrackRepository();
     final enabled = await repo.getSetting('towers_enabled') == '1';
     final mncsRaw = await repo.getSetting('towers_mncs');
+    final showMeas = await repo.getSetting('show_measurements') == '1';
     final count = await _towersRepo.count();
     final loadedAtRaw = await repo.getSetting('towers_loaded_at');
     if (!mounted) return;
     setState(() {
       _towersEnabled = enabled;
+      _showMeasurements = showMeas;
       _selectedMncs = mncsRaw == null || mncsRaw.isEmpty
           ? kRuOperators.map((o) => o.mnc).toSet()
           : mncsRaw
@@ -106,12 +112,18 @@ class _MapScreenState extends State<MapScreen> {
           loadedAtRaw != null ? DateTime.tryParse(loadedAtRaw) : null;
     });
     if (enabled) _loadTowersInView();
+    if (showMeas) _loadMeasurementsInView();
   }
 
-  Future<void> _saveTowerLayerSettings(bool enabled, Set<int> mncs) async {
+  Future<void> _saveLayerSettings(
+    bool enabled,
+    Set<int> mncs,
+    bool showMeasurements,
+  ) async {
     final repo = TrackRepository();
     await repo.setSetting('towers_enabled', enabled ? '1' : '0');
     await repo.setSetting('towers_mncs', mncs.join(','));
+    await repo.setSetting('show_measurements', showMeasurements ? '1' : '0');
   }
 
   Future<void> _openTowerSheet() async {
@@ -121,19 +133,27 @@ class _MapScreenState extends State<MapScreen> {
       builder: (context) => TowerLayerSheet(
         enabled: _towersEnabled,
         selectedMncs: _selectedMncs,
+        showMeasurements: _showMeasurements,
         towersCount: _towersCount,
         loadedAt: _towersLoadedAt,
-        onChanged: (enabled, mncs) {
+        onChanged: (enabled, mncs, showMeas) {
           setState(() {
             _towersEnabled = enabled;
             _selectedMncs = mncs;
-            _lastQueryBbox = null; // фильтр сменился — грузим заново
+            _showMeasurements = showMeas;
+            _lastQueryBbox = null;
+            _lastMeasBbox = null;
           });
-          _saveTowerLayerSettings(enabled, mncs);
+          _saveLayerSettings(enabled, mncs, showMeas);
           if (enabled) {
             _loadTowersInView();
           } else if (mounted) {
             setState(() => _towerLayerObjects = []);
+          }
+          if (showMeas) {
+            _loadMeasurementsInView();
+          } else if (mounted) {
+            setState(() => _measurementObjects = []);
           }
         },
         onDownload: (onProgress) async {
@@ -188,8 +208,7 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       final cam = await controller.getCameraPosition();
-      // Гистерезис зума: показываем от 12, скрываем ниже 11 —
-      // иначе слой мигает на границе.
+      // Гистерезис зума: показываем от 12, скрываем ниже 11.
       final shown = _towerLayerObjects.isNotEmpty;
       final threshold = shown ? 11.0 : 12.0;
       if (cam.zoom < threshold) {
@@ -205,7 +224,6 @@ class _MapScreenState extends State<MapScreen> {
       final region = await controller.getVisibleRegion();
       final sw = region.bottomLeft;
       final ne = region.topRight;
-      // Запас 25% за края экрана — меньше дозагрузок при панорамировании.
       final latPad = (ne.latitude - sw.latitude) * 0.25;
       final lonPad = (ne.longitude - sw.longitude) * 0.25;
       final south = sw.latitude - latPad;
@@ -271,6 +289,78 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  /// Heatmap собственных замеров в видимой области.
+  Future<void> _loadMeasurementsInView() async {
+    if (!_showMeasurements) return;
+    final controller = _mapController;
+    if (controller == null) return;
+
+    try {
+      final cam = await controller.getCameraPosition();
+      final shown = _measurementObjects.isNotEmpty;
+      final threshold = shown ? 11.0 : 12.0;
+      if (cam.zoom < threshold) {
+        if (shown && mounted) {
+          setState(() => _measurementObjects = []);
+        }
+        return;
+      }
+      final region = await controller.getVisibleRegion();
+      final sw = region.bottomLeft;
+      final ne = region.topRight;
+      final latPad = (ne.latitude - sw.latitude) * 0.25;
+      final lonPad = (ne.longitude - sw.longitude) * 0.25;
+      final south = sw.latitude - latPad;
+      final north = ne.latitude + latPad;
+      final west = sw.longitude - lonPad;
+      final east = ne.longitude + lonPad;
+
+      final b = _lastMeasBbox;
+      if (b != null &&
+          shown &&
+          south >= b[0] &&
+          north <= b[1] &&
+          west >= b[2] &&
+          east <= b[3]) {
+        return;
+      }
+
+      final rows = await TrackRepository().measurementsInBbox(
+        southLat: south,
+        northLat: north,
+        westLon: west,
+        eastLon: east,
+      );
+      if (!mounted) return;
+
+      final radius = cam.zoom < 14 ? 15.0 : cam.zoom < 16 ? 6.0 : 3.0;
+      setState(() {
+        _measurementObjects = [
+          for (var i = 0; i < rows.length; i++)
+            CircleMapObject(
+              mapId: MapObjectId('meas_$i'),
+              circle: Circle(
+                center: Point(
+                  latitude: (rows[i]['lat'] as num).toDouble(),
+                  longitude: (rows[i]['lon'] as num).toDouble(),
+                ),
+                radius: radius,
+              ),
+              fillColor: signalColor(
+                (rows[i]['rsrp'] as int?) ?? (rows[i]['dbm'] as int?),
+              ).withValues(alpha: 0.55),
+              strokeColor: Colors.transparent,
+              strokeWidth: 0,
+              zIndex: 0,
+            ),
+        ];
+      });
+      _lastMeasBbox = [south, north, west, east];
+    } catch (e) {
+      debugPrint('measurement layer load failed: $e');
+    }
+  }
+
   // ─── Запись ───────────────────────────────────────────────────────────────
 
   Future<void> _toggleRecording() async {
@@ -279,10 +369,11 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted) {
         var text = 'Трек сохранён: ${_recorder.pointCount} точек · '
             '${_recorder.distanceM.round()} м';
-        if (_recorder.lastShareOk == true) {
+        final share = _recorder.lastShareResult;
+        if (share == 'ok') {
           text += ' · отправлен в OpenCelliD';
-        } else if (_recorder.lastShareOk == false) {
-          text += ' · OpenCelliD: ошибка отправки';
+        } else if (share != null) {
+          text += ' · OpenCelliD: $share';
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(text)),
@@ -293,6 +384,10 @@ class _MapScreenState extends State<MapScreen> {
     if (!_permissionsGranted) {
       await _requestPermissions();
       if (!_permissionsGranted) return;
+    }
+    // Android 13+: постоянное уведомление FGS требует рантайм-пермишн.
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
     }
     await _maybeAskSharing();
     if (!mounted) return;
@@ -594,9 +689,16 @@ class _MapScreenState extends State<MapScreen> {
           YandexMap(
             mapType: _mapType,
             nightModeEnabled: false,
-            mapObjects: [..._towerLayerObjects, ..._linkObjects],
+            mapObjects: [
+              ..._towerLayerObjects,
+              ..._measurementObjects,
+              ..._linkObjects,
+            ],
             onCameraPositionChanged: (position, reason, finished) {
-              if (finished) _loadTowersInView();
+              if (finished) {
+                _loadTowersInView();
+                _loadMeasurementsInView();
+              }
             },
             onMapCreated: (controller) async {
               _mapController = controller;
@@ -623,8 +725,9 @@ class _MapScreenState extends State<MapScreen> {
                 await _enableUserLayer();
                 await _moveToUser();
               }
-              // Если слой вышек включён — грузим сразу после создания карты.
+              // Если слои включены — грузим сразу после создания карты.
               _loadTowersInView();
+              _loadMeasurementsInView();
             },
           ),
           Positioned(
@@ -649,8 +752,17 @@ class _MapScreenState extends State<MapScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             FloatingActionButton.small(
+              heroTag: 'history',
+              tooltip: 'История треков',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const HistoryScreen()),
+              ),
+              child: const Icon(Icons.history),
+            ),
+            const SizedBox(height: 12),
+            FloatingActionButton.small(
               heroTag: 'towers',
-              tooltip: 'Слой вышек',
+              tooltip: 'Слои карты',
               onPressed: _openTowerSheet,
               child: const Icon(Icons.cell_tower),
             ),

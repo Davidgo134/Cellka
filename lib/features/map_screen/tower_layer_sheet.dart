@@ -2,20 +2,23 @@ import 'package:flutter/material.dart';
 
 import '../../core/towers/towers_repository.dart';
 
-/// Bottom sheet слоя вышек: мастер-переключатель, чекбоксы операторов,
+/// Bottom sheet слоёв карты: вышки операторов, свои замеры (heatmap),
 /// загрузка/обновление базы с прогрессом и текстом ошибки.
 class TowerLayerSheet extends StatefulWidget {
   final bool enabled;
   final Set<int> selectedMncs;
+  final bool showMeasurements;
   final int towersCount;
   final DateTime? loadedAt;
-  final void Function(bool enabled, Set<int> mncs) onChanged;
+  final void Function(bool enabled, Set<int> mncs, bool showMeasurements)
+      onChanged;
   final Future<int> Function(void Function(String) onProgress) onDownload;
 
   const TowerLayerSheet({
     super.key,
     required this.enabled,
     required this.selectedMncs,
+    required this.showMeasurements,
     required this.towersCount,
     required this.loadedAt,
     required this.onChanged,
@@ -29,6 +32,7 @@ class TowerLayerSheet extends StatefulWidget {
 class _TowerLayerSheetState extends State<TowerLayerSheet> {
   late bool _enabled;
   late Set<int> _mncs;
+  late bool _showMeasurements;
   bool _downloading = false;
   String? _progress;
 
@@ -37,9 +41,10 @@ class _TowerLayerSheetState extends State<TowerLayerSheet> {
     super.initState();
     _enabled = widget.enabled;
     _mncs = Set.of(widget.selectedMncs);
+    _showMeasurements = widget.showMeasurements;
   }
 
-  void _apply() => widget.onChanged(_enabled, _mncs);
+  void _apply() => widget.onChanged(_enabled, _mncs, _showMeasurements);
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +73,16 @@ class _TowerLayerSheetState extends State<TowerLayerSheet> {
               value: _enabled,
               onChanged: (v) {
                 setState(() => _enabled = v);
+                _apply();
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Мои замеры'),
+              subtitle: const Text('Точки из записанных треков, цвет по сигналу'),
+              value: _showMeasurements,
+              onChanged: (v) {
+                setState(() => _showMeasurements = v);
                 _apply();
               },
             ),

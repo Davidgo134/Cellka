@@ -136,6 +136,25 @@ class TrackRepository {
     );
   }
 
+  /// Свои замеры в области карты — для heatmap-слоя.
+  Future<List<Map<String, Object?>>> measurementsInBbox({
+    required double southLat,
+    required double northLat,
+    required double westLon,
+    required double eastLon,
+    int limit = 1500,
+  }) async {
+    final db = await _db;
+    return db.query(
+      'measurements',
+      columns: ['lat', 'lon', 'rsrp', 'dbm'],
+      where: 'lat IS NOT NULL AND lat BETWEEN ? AND ? '
+          'AND lon BETWEEN ? AND ?',
+      whereArgs: [southLat, northLat, westLon, eastLon],
+      limit: limit,
+    );
+  }
+
   Future<void> deleteTrack(String id) async {
     final db = await _db;
     await db.delete('tracks', where: 'id = ?', whereArgs: [id]);

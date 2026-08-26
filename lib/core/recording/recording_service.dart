@@ -53,8 +53,8 @@ class RecordingService extends ChangeNotifier {
   int get pointCount => _pointCount;
   double get distanceM => _distanceM;
 
-  /// null — отправки не было; true/false — итог отправки в OpenCelliD.
-  bool? lastShareOk;
+  /// null — отправки не было; 'ok' — успех; иначе текст ошибки OpenCelliD.
+  String? lastShareResult;
 
   Future<void> start() async {
     if (_recording) return;
@@ -70,7 +70,7 @@ class RecordingService extends ChangeNotifier {
     _lastPci = null;
     _lastBand = null;
     _operator = null;
-    lastShareOk = null;
+    lastShareResult = null;
     _shareEnabled = await _repo.getSetting('share_opencellid') == '1';
 
     await _repo.createTrack(_trackId!, DateTime.now());
@@ -118,8 +118,8 @@ class RecordingService extends ChangeNotifier {
         _operator,
       );
       if (_shareEnabled && _uploader.hasKey) {
-        // Один multipart-запрос с JSON всех точек трека.
-        lastShareOk = await _uploader.uploadTrack(id);
+        final err = await _uploader.uploadTrack(id);
+        lastShareResult = err ?? 'ok';
       }
     }
     _trackId = null;
