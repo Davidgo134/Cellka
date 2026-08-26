@@ -3,6 +3,7 @@ name: Towers DB
 # Зеркало базы вышек OpenCelliD (MCC 250) в GitHub Release.
 # Запуск: вручную из Actions или по расписанию (понедельник 03:00 UTC).
 # Данные © OpenCelliD contributors, CC BY-SA 4.0 — атрибуция в приложении.
+# NB: файловый эндпоинт — /ocid/downloads (downloads.php отдаёт HTML-страницу).
 
 on:
   workflow_dispatch:
@@ -21,9 +22,14 @@ jobs:
           OCID_TOKEN: ${{ secrets.OPENCELLID_API_KEY }}
         run: |
           curl -fL --retry 3 -o 250.csv.gz \
-            "https://opencellid.org/downloads.php?token=${OCID_TOKEN}&type=mcc&file=250.csv.gz"
+            "https://opencellid.org/ocid/downloads?token=${OCID_TOKEN}&type=mcc&file=250.csv.gz"
           ls -lh 250.csv.gz
-          head -c 2 250.csv.gz | xxd | grep -q '1f8b' && echo 'gzip OK'
+          if ! head -c 2 250.csv.gz | xxd | grep -q '1f8b'; then
+            echo 'ERROR: ответ не gzip. Первые байты ответа сервера:'
+            head -c 500 250.csv.gz
+            exit 1
+          fi
+          echo 'gzip OK'
       - name: Publish to Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

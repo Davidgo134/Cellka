@@ -11,6 +11,9 @@ import 'towers_repository.dart';
 ///
 /// Формат CSV: radio,mcc,net,area,cell,unit,lon,lat,range,samples,
 /// changeable,created,updated,averageSignal
+///
+/// NB: файловый эндпоинт OpenCelliD — /ocid/downloads
+/// (downloads.php отдаёт HTML-страницу, не файл).
 class TowerDownloadService {
   static const _apiKey =
       String.fromEnvironment('OPENCELLID_API_KEY', defaultValue: '');
@@ -34,7 +37,7 @@ class TowerDownloadService {
     } catch (e) {
       if (_apiKey.isEmpty) rethrow;
       onProgress?.call('Зеркало недоступно, пробую OpenCelliD…');
-      final uri = Uri.https('opencellid.org', '/downloads.php', {
+      final uri = Uri.https('opencellid.org', '/ocid/downloads', {
         'token': _apiKey,
         'type': 'mcc',
         'file': _mccFile,
