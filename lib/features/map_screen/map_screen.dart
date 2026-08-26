@@ -2,9 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:yandex_mapkit/yandex_mapkit.dart';
 
 import '../../core/db/track_repository.dart';
 import '../../core/models/cell_info.dart';
@@ -20,7 +21,10 @@ import 'signal_strip.dart';
 import 'tower_info_sheet.dart';
 import 'tower_layer_sheet.dart';
 
-/// Главный экран: карта Yandex + signal strip + FAB-стек.
+/// Режимы подложки карты.
+enum CellkaMapMode { satellite, hybrid, scheme }
+
+/// Главный экран: карта (flutter_map + Esri/OSM) + signal strip + FAB-стек.
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
 
@@ -29,9 +33,17 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
+  /// Спутниковые тайлы Esri (z/y/x) и подписи для гибрида.
+  static const _esriImagery =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/'
+      'World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  static const _esriLabels =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/'
+      'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+  static const _osmScheme = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
   /// Дефолтная точка (центр Москвы), если нет ни кэша позиции, ни фикса.
-  static const _fallbackTarget =
-      Point(latitude: 55.751244, longitude: 37.618423);
+  static const _fallbackPoint = LatLng(55.751244, 37.618423);
 
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
@@ -40,27 +52,31 @@ class _MapScreenState extends State<MapScreen> {
   final _downloader = TowerDownloadService();
   late final RecordingService _recorder;
 
-  YandexMapController? _mapController;
+  final _mapController = MapController();
   StreamSubscription<List<CellInfo>>? _cellsSub;
-  Timer? _fixCheckTimer;
+  StreamSubscription<Position>? _posSub;
+  Timer? _debounce;
+  bool _mapReady = false;
 
-  MapType _mapType = MapType.hybrid;
+  CellkaMapMode _mode = CellkaMapMode.hybrid;
   CellInfo? _servingCell;
   List<CellInfo> _allCells = [];
   bool _permissionsGranted = false;
+
+  LatLng? _myPos;
+  double _posAccuracy = 0;
   bool _hasFix = false;
-  bool _autoMovedToUser = false;
 
   /// Линия к обслуживающей вышке + её маркер.
-  List<MapObject> _linkObjects = [];
+  List<Marker> _linkMarkers = [];
+  List<Polyline> _linkLines = [];
   String? _lastTowerKey;
   String? _lastErrorKey;
   DateTime _lastErrorAt = DateTime.fromMillisecondsSinceEpoch(0);
   final Set<String> _warned = {};
 
   /// Слой вышек выбранных операторов.
-  List<MapObject> _towerLayerObjects = [];
-  final Map<String, Tower> _towersById = {};
+  List<Marker> _towerMarkers = [];
   bool _towersEnabled = false;
   Set<int> _selectedMncs = {};
   int _towersCount = 0;
@@ -68,7 +84,7 @@ class _MapScreenState extends State<MapScreen> {
   List<double>? _lastQueryBbox;
 
   /// Heatmap собственных замеров.
-  List<MapObject> _measurementObjects = [];
+  List<CircleMarker> _measurementCircles = [];
   bool _showMeasurements = false;
   List<double>? _lastMeasBbox;
 
@@ -111,8 +127,8 @@ class _MapScreenState extends State<MapScreen> {
       _towersLoadedAt =
           loadedAtRaw != null ? DateTime.tryParse(loadedAtRaw) : null;
     });
-    if (enabled) _loadTowersInView();
-    if (showMeas) _loadMeasurementsInView();
+    _loadTowersInView();
+    _loadMeasurementsInView();
   }
 
   Future<void> _saveLayerSettings(
@@ -145,16 +161,10 @@ class _MapScreenState extends State<MapScreen> {
             _lastMeasBbox = null;
           });
           _saveLayerSettings(enabled, mncs, showMeas);
-          if (enabled) {
-            _loadTowersInView();
-          } else if (mounted) {
-            setState(() => _towerLayerObjects = []);
-          }
-          if (showMeas) {
-            _loadMeasurementsInView();
-          } else if (mounted) {
-            setState(() => _measurementObjects = []);
-          }
+          if (!enabled) setState(() => _towerMarkers = []);
+          if (!showMeas) setState(() => _measurementCircles = []);
+          _loadTowersInView();
+          _loadMeasurementsInView();
         },
         onDownload: (onProgress) async {
           final count = await _downloader.downloadAndImport(
@@ -171,7 +181,7 @@ class _MapScreenState extends State<MapScreen> {
               _towersLoadedAt = DateTime.now();
               _lastQueryBbox = null;
             });
-            if (_towersEnabled) _loadTowersInView();
+            _loadTowersInView();
           }
           return count;
         },
@@ -186,99 +196,87 @@ class _MapScreenState extends State<MapScreen> {
         tower: t,
         onGoTo: () {
           Navigator.pop(context);
-          _mapController?.moveCamera(
-            CameraUpdate.newCameraPosition(
-              CameraPosition(
-                target: Point(latitude: t.lat, longitude: t.lon),
-                zoom: 16.5,
-              ),
-            ),
-            animation: const MapAnimation(duration: 0.5),
-          );
+          _mapController.move(LatLng(t.lat, t.lon), 16.5);
         },
       ),
     );
   }
 
+  /// Видимая область карты [south, north, west, east] с запасом 25%.
+  List<double>? _paddedBounds() {
+    if (!_mapReady) return null;
+    try {
+      final b = _mapController.camera.visibleBounds;
+      final latPad = (b.north - b.south) * 0.25;
+      final lonPad = (b.east - b.west) * 0.25;
+      return [b.south - latPad, b.north + latPad, b.west - lonPad,
+          b.east + lonPad];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _covered(List<double>? last, List<double> cur) {
+    if (last == null) return false;
+    return cur[0] >= last[0] &&
+        cur[1] <= last[1] &&
+        cur[2] >= last[2] &&
+        cur[3] <= last[3];
+  }
+
   /// Загрузка вышек видимой области из локальной базы (после дампа).
   Future<void> _loadTowersInView() async {
-    if (!_towersEnabled) return;
-    final controller = _mapController;
-    if (controller == null) return;
+    if (!_towersEnabled || !_mapReady) return;
+    final zoom = _mapController.camera.zoom;
+
+    // Гистерезис зума: показываем от 12, скрываем ниже 11.
+    final shown = _towerMarkers.isNotEmpty;
+    final threshold = shown ? 11.0 : 12.0;
+    if (zoom < threshold) {
+      if (shown && mounted) setState(() => _towerMarkers = []);
+      return;
+    }
+    if (_towersCount == 0) {
+      _warnOnce('emptydb', 'База вышек пуста — скачай её в меню слоя');
+      return;
+    }
+    final bbox = _paddedBounds();
+    if (bbox == null) return;
+    if (_covered(_lastQueryBbox, bbox) && shown) return;
 
     try {
-      final cam = await controller.getCameraPosition();
-      // Гистерезис зума: показываем от 12, скрываем ниже 11.
-      final shown = _towerLayerObjects.isNotEmpty;
-      final threshold = shown ? 11.0 : 12.0;
-      if (cam.zoom < threshold) {
-        if (shown && mounted) {
-          setState(() => _towerLayerObjects = []);
-        }
-        return;
-      }
-      if (_towersCount == 0) {
-        _warnOnce('emptydb', 'База вышек пуста — скачай её в меню слоя');
-        return;
-      }
-      final region = await controller.getVisibleRegion();
-      final sw = region.bottomLeft;
-      final ne = region.topRight;
-      final latPad = (ne.latitude - sw.latitude) * 0.25;
-      final lonPad = (ne.longitude - sw.longitude) * 0.25;
-      final south = sw.latitude - latPad;
-      final north = ne.latitude + latPad;
-      final west = sw.longitude - lonPad;
-      final east = ne.longitude + lonPad;
-
-      // Уже покрыто прошлой загрузкой — не пересоздаём слой.
-      final b = _lastQueryBbox;
-      if (b != null &&
-          shown &&
-          south >= b[0] &&
-          north <= b[1] &&
-          west >= b[2] &&
-          east <= b[3]) {
-        return;
-      }
-
       final towers = await _towersRepo.inBbox(
-        southLat: south,
-        northLat: north,
-        westLon: west,
-        eastLon: east,
+        southLat: bbox[0],
+        northLat: bbox[1],
+        westLon: bbox[2],
+        eastLon: bbox[3],
         mncs: _selectedMncs,
       );
       if (!mounted) return;
 
-      // Радиус в метрах по ярусам зума — иначе точки незаметны.
-      final radius = cam.zoom < 13 ? 60.0 : cam.zoom < 15 ? 25.0 : 12.0;
-      _towersById.clear();
+      // Точки фиксированного размера — видны на любом зуме.
+      final size = zoom < 13 ? 22.0 : zoom < 15 ? 16.0 : 11.0;
       setState(() {
-        _towerLayerObjects = [
+        _towerMarkers = [
           for (final t in towers)
-            () {
-              final id = 'tower_${t.radio}_${t.mnc}_${t.area}_${t.cell}';
-              _towersById[id] = t;
-              return CircleMapObject(
-                mapId: MapObjectId(id),
-                circle: Circle(
-                  center: Point(latitude: t.lat, longitude: t.lon),
-                  radius: radius,
+            Marker(
+              point: LatLng(t.lat, t.lon),
+              width: size,
+              height: size,
+              child: GestureDetector(
+                onTap: () => _showTowerInfo(t),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colorForMnc(t.mnc).withValues(alpha: 0.9),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
                 ),
-                fillColor: colorForMnc(t.mnc).withValues(alpha: 0.9),
-                strokeColor: Colors.white,
-                strokeWidth: 1.5,
-                zIndex: 0,
-                onTap: (self, point) {
-                  final tower = _towersById[self.mapId.value];
-                  if (tower != null) _showTowerInfo(tower);
-                },
-              );
-            }(),
+              ),
+            ),
         ];
       });
-      _lastQueryBbox = [south, north, west, east];
+      _lastQueryBbox = bbox;
       _warnOnce(
         'layercount',
         'Вышек в области: ${towers.length} (база: $_towersCount)',
@@ -291,74 +289,58 @@ class _MapScreenState extends State<MapScreen> {
 
   /// Heatmap собственных замеров в видимой области.
   Future<void> _loadMeasurementsInView() async {
-    if (!_showMeasurements) return;
-    final controller = _mapController;
-    if (controller == null) return;
+    if (!_showMeasurements || !_mapReady) return;
+    final zoom = _mapController.camera.zoom;
+
+    final shown = _measurementCircles.isNotEmpty;
+    final threshold = shown ? 11.0 : 12.0;
+    if (zoom < threshold) {
+      if (shown && mounted) setState(() => _measurementCircles = []);
+      return;
+    }
+    final bbox = _paddedBounds();
+    if (bbox == null) return;
+    if (_covered(_lastMeasBbox, bbox) && shown) return;
 
     try {
-      final cam = await controller.getCameraPosition();
-      final shown = _measurementObjects.isNotEmpty;
-      final threshold = shown ? 11.0 : 12.0;
-      if (cam.zoom < threshold) {
-        if (shown && mounted) {
-          setState(() => _measurementObjects = []);
-        }
-        return;
-      }
-      final region = await controller.getVisibleRegion();
-      final sw = region.bottomLeft;
-      final ne = region.topRight;
-      final latPad = (ne.latitude - sw.latitude) * 0.25;
-      final lonPad = (ne.longitude - sw.longitude) * 0.25;
-      final south = sw.latitude - latPad;
-      final north = ne.latitude + latPad;
-      final west = sw.longitude - lonPad;
-      final east = ne.longitude + lonPad;
-
-      final b = _lastMeasBbox;
-      if (b != null &&
-          shown &&
-          south >= b[0] &&
-          north <= b[1] &&
-          west >= b[2] &&
-          east <= b[3]) {
-        return;
-      }
-
       final rows = await TrackRepository().measurementsInBbox(
-        southLat: south,
-        northLat: north,
-        westLon: west,
-        eastLon: east,
+        southLat: bbox[0],
+        northLat: bbox[1],
+        westLon: bbox[2],
+        eastLon: bbox[3],
       );
       if (!mounted) return;
 
-      final radius = cam.zoom < 14 ? 15.0 : cam.zoom < 16 ? 6.0 : 3.0;
+      final radius = zoom < 14 ? 15.0 : zoom < 16 ? 6.0 : 3.0;
       setState(() {
-        _measurementObjects = [
-          for (var i = 0; i < rows.length; i++)
-            CircleMapObject(
-              mapId: MapObjectId('meas_$i'),
-              circle: Circle(
-                center: Point(
-                  latitude: (rows[i]['lat'] as num).toDouble(),
-                  longitude: (rows[i]['lon'] as num).toDouble(),
-                ),
-                radius: radius,
+        _measurementCircles = [
+          for (final r in rows)
+            CircleMarker(
+              point: LatLng(
+                (r['lat'] as num).toDouble(),
+                (r['lon'] as num).toDouble(),
               ),
-              fillColor: signalColor(
-                (rows[i]['rsrp'] as int?) ?? (rows[i]['dbm'] as int?),
+              radius: radius,
+              useRadiusInMeter: true,
+              color: signalColor(
+                (r['rsrp'] as int?) ?? (r['dbm'] as int?),
               ).withValues(alpha: 0.55),
-              strokeColor: Colors.transparent,
-              strokeWidth: 0,
-              zIndex: 0,
             ),
         ];
       });
-      _lastMeasBbox = [south, north, west, east];
+      _lastMeasBbox = bbox;
     } catch (e) {
       debugPrint('measurement layer load failed: $e');
     }
+  }
+
+  void _onMapPosition(MapPosition pos, bool hasGesture) {
+    // Дебаунс: грузим слои после остановки камеры.
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      _loadTowersInView();
+      _loadMeasurementsInView();
+    });
   }
 
   // ─── Запись ───────────────────────────────────────────────────────────────
@@ -431,7 +413,7 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) setState(() => _permissionsGranted = granted);
 
     if (granted) {
-      await _enableUserLayer();
+      _startPositionStream();
       await _moveToUser();
     }
 
@@ -451,27 +433,36 @@ class _MapScreenState extends State<MapScreen> {
         _updateTowerLink(serving);
       }
     });
+  }
 
-    // Проверяем наличие GPS-фикса каждые 3 секунды
-    _fixCheckTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      final controller = _mapController;
-      if (controller == null) return;
-      try {
-        final pos = await controller.getUserCameraPosition();
-        if (mounted) setState(() => _hasFix = pos != null);
-      } catch (_) {
-        if (mounted) setState(() => _hasFix = false);
+  /// Постоянный стрим позиции для маркера «я» (пока экран открыт).
+  void _startPositionStream() {
+    _posSub ??= Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 3,
+      ),
+    ).listen((p) {
+      if (mounted) {
+        setState(() {
+          _myPos = LatLng(p.latitude, p.longitude);
+          _posAccuracy = p.accuracy;
+          _hasFix = true;
+        });
       }
     });
   }
 
   /// Линия «пользователь → обслуживающая вышка» как в CellMapper.
-  /// Источники координат по приоритету: OpenCelliD → наша оценка.
+  /// Источники координат: кэш → локальный дамп → OpenCelliD → наша оценка.
   Future<void> _updateTowerLink(CellInfo? serving) async {
     if (serving == null) {
       _lastTowerKey = null;
-      if (_linkObjects.isNotEmpty && mounted) {
-        setState(() => _linkObjects = []);
+      if ((_linkMarkers.isNotEmpty || _linkLines.isNotEmpty) && mounted) {
+        setState(() {
+          _linkMarkers = [];
+          _linkLines = [];
+        });
       }
       return;
     }
@@ -495,20 +486,29 @@ class _MapScreenState extends State<MapScreen> {
         await _drawTowerLink(serving, result.location!);
       case TowerLookupStatus.noKey:
         _warnOnce('nokey', 'Нет ключа OpenCelliD — линия к вышке отключена');
-        setState(() => _linkObjects = []);
+        setState(() {
+          _linkMarkers = [];
+          _linkLines = [];
+        });
       case TowerLookupStatus.invalidKey:
         _warnOnce(
           'badkey',
           'OpenCelliD: ключ не принят (401) — проверь секрет в CI',
         );
-        setState(() => _linkObjects = []);
+        setState(() {
+          _linkMarkers = [];
+          _linkLines = [];
+        });
       case TowerLookupStatus.forbidden:
         _warnOnce(
           'forbidden',
           'OpenCelliD: ключ не в белом списке (403). Лечится отправкой '
           'замеров — диалог при старте записи',
         );
-        setState(() => _linkObjects = []);
+        setState(() {
+          _linkMarkers = [];
+          _linkLines = [];
+        });
       case TowerLookupStatus.notFound:
         // Соты нет в базе — пробуем собственную оценку позиции.
         final est = await CellEstimator.instance.estimate(
@@ -532,7 +532,10 @@ class _MapScreenState extends State<MapScreen> {
             'Соты нет в базе OpenCelliD — оценка позиции появится '
             'после ≥5 замеров с ней',
           );
-          setState(() => _linkObjects = []);
+          setState(() {
+            _linkMarkers = [];
+            _linkLines = [];
+          });
         }
       case TowerLookupStatus.error:
         // Молча: ретрай через 30 с по троттлингу выше.
@@ -557,61 +560,56 @@ class _MapScreenState extends State<MapScreen> {
     final userPoint = await _userPoint();
     if (!mounted) return;
     if (userPoint == null) {
-      setState(() => _linkObjects = []);
+      setState(() {
+        _linkMarkers = [];
+        _linkLines = [];
+      });
       return;
     }
 
-    final towerPoint = Point(latitude: loc.lat, longitude: loc.lon);
+    final towerPoint = LatLng(loc.lat, loc.lon);
     final color = estimated ? Colors.white70 : signalColor(serving.rsrp);
     setState(() {
-      _linkObjects = [
-        CircleMapObject(
-          mapId: const MapObjectId('serving_tower'),
-          circle: Circle(center: towerPoint, radius: 25),
-          fillColor:
-              estimated ? Colors.transparent : color.withValues(alpha: 0.35),
-          strokeColor: color,
-          strokeWidth: 2,
-          zIndex: 2,
+      _linkMarkers = [
+        Marker(
+          point: towerPoint,
+          width: 30,
+          height: 30,
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: estimated
+                  ? Colors.transparent
+                  : color.withValues(alpha: 0.3),
+              border: Border.all(color: color, width: 2.5),
+            ),
+          ),
         ),
-        PolylineMapObject(
-          mapId: const MapObjectId('serving_link'),
-          polyline: Polyline(points: [userPoint, towerPoint]),
-          strokeColor: color,
+      ];
+      _linkLines = [
+        Polyline(
+          points: [userPoint, towerPoint],
+          color: color,
           strokeWidth: estimated ? 2 : 3,
-          zIndex: 1,
         ),
       ];
     });
   }
 
-  Future<Point?> _userPoint() async {
-    try {
-      final cam = await _mapController?.getUserCameraPosition();
-      if (cam != null) return cam.target;
-    } catch (_) {}
+  Future<LatLng?> _userPoint() async {
+    if (_myPos != null) return _myPos;
     try {
       final p = await Geolocator.getLastKnownPosition();
-      if (p != null) return Point(latitude: p.latitude, longitude: p.longitude);
+      if (p != null) return LatLng(p.latitude, p.longitude);
     } catch (_) {}
     return null;
   }
 
-  Future<void> _enableUserLayer() async {
-    final controller = _mapController;
-    if (controller == null) return;
-    try {
-      await controller.toggleUserLayer(visible: true, autoZoomEnabled: false);
-    } catch (_) {}
-  }
+  /// Перелёт камеры к пользователю: кэш → свежая позиция. Авто — один раз.
+  bool _autoMovedToUser = false;
 
-  /// Перелёт камеры к пользователю: сначала кэшированная позиция
-  /// (мгновенно), затем свежая с геолокатора. Автоматически — один раз.
   Future<void> _moveToUser({bool force = false}) async {
     if (_autoMovedToUser && !force) return;
-    final controller = _mapController;
-    if (controller == null) return;
-
     try {
       Position? pos = await Geolocator.getLastKnownPosition();
       pos ??= await Geolocator.getCurrentPosition(
@@ -619,42 +617,34 @@ class _MapScreenState extends State<MapScreen> {
         timeLimit: const Duration(seconds: 6),
       );
       _autoMovedToUser = true;
-      await controller.moveCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: Point(latitude: pos.latitude, longitude: pos.longitude),
-            zoom: 15.5,
-          ),
-        ),
-        animation: const MapAnimation(duration: 0.6),
-      );
+      if (_mapReady) {
+        _mapController.move(LatLng(pos.latitude, pos.longitude), 15.5);
+      }
     } catch (_) {
       // Позиции нет — остаёмся на стартовом виде.
     }
   }
 
   Future<void> _centerOnUser() async {
-    final controller = _mapController;
-    if (controller == null) return;
-    final position = await controller.getUserCameraPosition();
-    if (position != null) {
-      await controller.moveCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: position.target, zoom: 16),
-        ),
-        animation: const MapAnimation(duration: 0.5),
-      );
+    if (_myPos != null) {
+      _mapController.move(_myPos!, 16);
       return;
     }
     await _moveToUser(force: true);
   }
 
-  void _toggleMapType() {
+  void _toggleMapMode() {
     setState(() {
-      _mapType =
-          _mapType == MapType.hybrid ? MapType.satellite : MapType.hybrid;
+      _mode = CellkaMapMode
+          .values[(_mode.index + 1) % CellkaMapMode.values.length];
     });
   }
+
+  String get _modeLabel => switch (_mode) {
+        CellkaMapMode.satellite => 'Спутник',
+        CellkaMapMode.hybrid => 'Гибрид',
+        CellkaMapMode.scheme => 'Схема',
+      };
 
   Future<void> _requestPermissions() async {
     if (await _permissions.isPermanentlyDenied) {
@@ -664,7 +654,7 @@ class _MapScreenState extends State<MapScreen> {
     final granted = await _permissions.ensureTelephonyPermissions();
     if (mounted) setState(() => _permissionsGranted = granted);
     if (granted) {
-      await _enableUserLayer();
+      _startPositionStream();
       await _moveToUser();
     }
   }
@@ -674,8 +664,8 @@ class _MapScreenState extends State<MapScreen> {
     _recorder.removeListener(_onRecorderChanged);
     _recorder.dispose();
     _cellsSub?.cancel();
-    _fixCheckTimer?.cancel();
-    _mapController?.dispose();
+    _posSub?.cancel();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -686,49 +676,77 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          YandexMap(
-            mapType: _mapType,
-            nightModeEnabled: false,
-            mapObjects: [
-              ..._towerLayerObjects,
-              ..._measurementObjects,
-              ..._linkObjects,
-            ],
-            onCameraPositionChanged: (position, reason, finished) {
-              if (finished) {
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _myPos ?? _fallbackPoint,
+              initialZoom: _myPos != null ? 15 : 10,
+              onMapReady: () {
+                _mapReady = true;
                 _loadTowersInView();
                 _loadMeasurementsInView();
-              }
-            },
-            onMapCreated: (controller) async {
-              _mapController = controller;
-              // Стартовый вид: кэшированная позиция или центр Москвы,
-              // чтобы не показывать «всю планету».
-              var start = _fallbackTarget;
-              var zoom = 10.0;
-              try {
-                final cached = await Geolocator.getLastKnownPosition();
-                if (cached != null) {
-                  start = Point(
-                    latitude: cached.latitude,
-                    longitude: cached.longitude,
-                  );
-                  zoom = 14;
-                }
-              } catch (_) {}
-              await controller.moveCamera(
-                CameraUpdate.newCameraPosition(
-                  CameraPosition(target: start, zoom: zoom),
+                _moveToUser();
+              },
+              onPositionChanged: _onMapPosition,
+            ),
+            children: [
+              if (_mode == CellkaMapMode.scheme)
+                TileLayer(
+                  urlTemplate: _osmScheme,
+                  userAgentPackageName: 'com.github.davidgo134.cellka',
+                )
+              else ...[
+                TileLayer(
+                  urlTemplate: _esriImagery,
+                  userAgentPackageName: 'com.github.davidgo134.cellka',
+                  maxZoom: 19,
                 ),
-              );
-              if (_permissionsGranted) {
-                await _enableUserLayer();
-                await _moveToUser();
-              }
-              // Если слои включены — грузим сразу после создания карты.
-              _loadTowersInView();
-              _loadMeasurementsInView();
-            },
+                if (_mode == CellkaMapMode.hybrid)
+                  TileLayer(
+                    urlTemplate: _esriLabels,
+                    userAgentPackageName: 'com.github.davidgo134.cellka',
+                    maxZoom: 19,
+                  ),
+              ],
+              // Heatmap своих замеров и круг точности позиции.
+              CircleLayer(
+                circles: [
+                  ..._measurementCircles,
+                  if (_myPos != null && _posAccuracy > 0)
+                    CircleMarker(
+                      point: _myPos!,
+                      radius: _posAccuracy,
+                      useRadiusInMeter: true,
+                      color: Colors.blueAccent.withValues(alpha: 0.15),
+                    ),
+                ],
+              ),
+              PolylineLayer(polylines: _linkLines),
+              MarkerLayer(
+                markers: [
+                  ..._towerMarkers,
+                  ..._linkMarkers,
+                  if (_myPos != null)
+                    Marker(
+                      point: _myPos!,
+                      width: 24,
+                      height: 24,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2.5),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              AttributionWidget.defaultWidget(
+                source: _mode == CellkaMapMode.scheme
+                    ? '© OpenStreetMap contributors'
+                    : 'Esri, Maxar, Earthstar Geographics',
+              ),
+            ],
           ),
           Positioned(
             left: 12,
@@ -779,8 +797,8 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 12),
             FloatingActionButton.small(
               heroTag: 'layers',
-              tooltip: 'Слой: гибрид / спутник',
-              onPressed: _toggleMapType,
+              tooltip: 'Подложка: $_modeLabel',
+              onPressed: _toggleMapMode,
               child: const Icon(Icons.layers),
             ),
             const SizedBox(height: 12),

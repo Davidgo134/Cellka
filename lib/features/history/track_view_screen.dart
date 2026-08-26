@@ -1,14 +1,13 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
-import 'package:yandex_mapkit/yandex_mapkit.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../core/db/track_repository.dart';
 import '../map_screen/signal_strip.dart';
 import 'export_sheet.dart';
 
 /// Просмотр сохранённого трека: полилиния маршрута + точки замеров
-/// с цветом по уровню сигнала.
+/// с цветом по уровню сигнала поверх спутника.
 class TrackViewScreen extends StatefulWidget {
   final TrackSummary track;
 
@@ -19,7 +18,15 @@ class TrackViewScreen extends StatefulWidget {
 }
 
 class _TrackViewScreenState extends State<TrackViewScreen> {
+  static const _esriImagery =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/'
+      'World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  static const _esriLabels =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/'
+      'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+
   final _repo = TrackRepository();
+  final _mapController = MapController();
   List<Map<String, Object?>> _points = [];
   bool _loading = true;
 
@@ -40,76 +47,21 @@ class _TrackViewScreenState extends State<TrackViewScreen> {
     }
   }
 
-  List<MapObject> _objects() {
-    if (_points.isEmpty) return [];
-    final pts = [
-      for (final p in _points)
-        Point(
-          latitude: (p['lat'] as num).toDouble(),
-          longitude: (p['lon'] as num).toDouble(),
-        ),
-    ];
-    final objects = <MapObject>[
-      PolylineMapObject(
-        mapId: const MapObjectId('track_line'),
-        polyline: Polyline(points: pts),
-        strokeColor: Colors.white60,
-        strokeWidth: 2,
-        zIndex: 0,
-      ),
-    ];
-    // Не более ~600 маркеров — прореживание по шагу.
-    final stride = (_points.length / 600).ceil();
-    for (var i = 0; i < _points.length; i += stride) {
-      final p = _points[i];
-      final dbm = (p['rsrp'] as int?) ?? (p['dbm'] as int?);
-      objects.add(
-        CircleMapObject(
-          mapId: MapObjectId('pt_$i'),
-          circle: Circle(
-            center: Point(
-              latitude: (p['lat'] as num).toDouble(),
-              longitude: (p['lon'] as num).toDouble(),
-            ),
-            radius: 4,
+  List<LatLng> get _latLngs => [
+        for (final p in _points)
+          LatLng(
+            (p['lat'] as num).toDouble(),
+            (p['lon'] as num).toDouble(),
           ),
-          fillColor: signalColor(dbm),
-          strokeColor: Colors.transparent,
-          strokeWidth: 0,
-          zIndex: 1,
-        ),
-      );
-    }
-    return objects;
-  }
+      ];
 
-  CameraPosition _fitCamera() {
-    if (_points.isEmpty) {
-      return const CameraPosition(
-        target: Point(latitude: 55.751244, longitude: 37.618423),
-        zoom: 10,
-      );
-    }
-    var minLat = 90.0, maxLat = -90.0, minLon = 180.0, maxLon = -180.0;
-    for (final p in _points) {
-      final lat = (p['lat'] as num).toDouble();
-      final lon = (p['lon'] as num).toDouble();
-      if (lat < minLat) minLat = lat;
-      if (lat > maxLat) maxLat = lat;
-      if (lon < minLon) minLon = lon;
-      if (lon > maxLon) maxLon = lon;
-    }
-    final span = math.max(maxLat - minLat, maxLon - minLon);
-    var zoom = 17.0;
-    while (zoom > 8 && 360 / math.pow(2, zoom) < span) {
-      zoom--;
-    }
-    return CameraPosition(
-      target: Point(
-        latitude: (minLat + maxLat) / 2,
-        longitude: (minLon + maxLon) / 2,
+  void _fitCamera() {
+    if (_points.length < 2) return;
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(_latLngs),
+        padding: const EdgeInsets.all(48),
       ),
-      zoom: zoom,
     );
   }
 
@@ -136,14 +88,54 @@ class _TrackViewScreenState extends State<TrackViewScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Stack(
               children: [
-                YandexMap(
-                  mapType: MapType.map,
-                  mapObjects: _objects(),
-                  onMapCreated: (controller) async {
-                    await controller.moveCamera(
-                      CameraUpdate.newCameraPosition(_fitCamera()),
-                    );
-                  },
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: _latLngs.isEmpty
+                        ? const LatLng(55.751244, 37.618423)
+                        : _latLngs.first,
+                    initialZoom: 14,
+                    onMapReady: _fitCamera,
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate: _esriImagery,
+                      userAgentPackageName: 'com.github.davidgo134.cellka',
+                      maxZoom: 19,
+                    ),
+                    TileLayer(
+                      urlTemplate: _esriLabels,
+                      userAgentPackageName: 'com.github.davidgo134.cellka',
+                      maxZoom: 19,
+                    ),
+                    if (_latLngs.length >= 2)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: _latLngs,
+                            color: Colors.white70,
+                            strokeWidth: 2,
+                          ),
+                        ],
+                      ),
+                    CircleLayer(
+                      circles: [
+                        for (var i = 0; i < _points.length; i++)
+                          CircleMarker(
+                            point: _latLngs[i],
+                            radius: 4,
+                            useRadiusInMeter: true,
+                            color: signalColor(
+                              (_points[i]['rsrp'] as int?) ??
+                                  (_points[i]['dbm'] as int?),
+                            ),
+                          ),
+                      ],
+                    ),
+                    AttributionWidget.defaultWidget(
+                      source: 'Esri, Maxar, Earthstar Geographics',
+                    ),
+                  ],
                 ),
                 Positioned(
                   left: 12,
