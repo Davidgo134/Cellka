@@ -132,10 +132,21 @@ class _TrackViewScreenState extends State<TrackViewScreen> {
                           ),
                       ],
                     ),
-                    AttributionWidget.defaultWidget(
-                      source: 'Esri, Maxar, Earthstar Geographics',
-                    ),
                   ],
+                ),
+                // Атрибуция тайлов (лицензионно обязательна).
+                Positioned(
+                  left: 4,
+                  bottom: 4,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    color: Colors.white.withValues(alpha: 0.6),
+                    child: const Text(
+                      'Tiles © Esri — Maxar, Earthstar Geographics',
+                      style: TextStyle(fontSize: 10, color: Colors.black87),
+                    ),
+                  ),
                 ),
                 Positioned(
                   left: 12,

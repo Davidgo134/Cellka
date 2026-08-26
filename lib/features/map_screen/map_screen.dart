@@ -88,6 +88,8 @@ class _MapScreenState extends State<MapScreen> {
   bool _showMeasurements = false;
   List<double>? _lastMeasBbox;
 
+  bool _autoMovedToUser = false;
+
   bool get _isRecording => _recorder.isRecording;
 
   @override
@@ -334,7 +336,7 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  void _onMapPosition(MapPosition pos, bool hasGesture) {
+  void _onMapPosition(MapCamera camera, bool hasGesture) {
     // Дебаунс: грузим слои после остановки камеры.
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () {
@@ -486,29 +488,20 @@ class _MapScreenState extends State<MapScreen> {
         await _drawTowerLink(serving, result.location!);
       case TowerLookupStatus.noKey:
         _warnOnce('nokey', 'Нет ключа OpenCelliD — линия к вышке отключена');
-        setState(() {
-          _linkMarkers = [];
-          _linkLines = [];
-        });
+        _clearLink();
       case TowerLookupStatus.invalidKey:
         _warnOnce(
           'badkey',
           'OpenCelliD: ключ не принят (401) — проверь секрет в CI',
         );
-        setState(() {
-          _linkMarkers = [];
-          _linkLines = [];
-        });
+        _clearLink();
       case TowerLookupStatus.forbidden:
         _warnOnce(
           'forbidden',
           'OpenCelliD: ключ не в белом списке (403). Лечится отправкой '
           'замеров — диалог при старте записи',
         );
-        setState(() {
-          _linkMarkers = [];
-          _linkLines = [];
-        });
+        _clearLink();
       case TowerLookupStatus.notFound:
         // Соты нет в базе — пробуем собственную оценку позиции.
         final est = await CellEstimator.instance.estimate(
@@ -532,10 +525,7 @@ class _MapScreenState extends State<MapScreen> {
             'Соты нет в базе OpenCelliD — оценка позиции появится '
             'после ≥5 замеров с ней',
           );
-          setState(() {
-            _linkMarkers = [];
-            _linkLines = [];
-          });
+          _clearLink();
         }
       case TowerLookupStatus.error:
         // Молча: ретрай через 30 с по троттлингу выше.
@@ -543,6 +533,13 @@ class _MapScreenState extends State<MapScreen> {
         _lastErrorKey = key;
         _lastErrorAt = DateTime.now();
     }
+  }
+
+  void _clearLink() {
+    setState(() {
+      _linkMarkers = [];
+      _linkLines = [];
+    });
   }
 
   void _warnOnce(String id, String text) {
@@ -560,10 +557,7 @@ class _MapScreenState extends State<MapScreen> {
     final userPoint = await _userPoint();
     if (!mounted) return;
     if (userPoint == null) {
-      setState(() {
-        _linkMarkers = [];
-        _linkLines = [];
-      });
+      _clearLink();
       return;
     }
 
@@ -606,8 +600,6 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   /// Перелёт камеры к пользователю: кэш → свежая позиция. Авто — один раз.
-  bool _autoMovedToUser = false;
-
   Future<void> _moveToUser({bool force = false}) async {
     if (_autoMovedToUser && !force) return;
     try {
@@ -741,12 +733,22 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                 ],
               ),
-              AttributionWidget.defaultWidget(
-                source: _mode == CellkaMapMode.scheme
-                    ? '© OpenStreetMap contributors'
-                    : 'Esri, Maxar, Earthstar Geographics',
-              ),
             ],
+          ),
+          // Атрибуция тайлов (лицензионно обязательна).
+          Positioned(
+            left: 4,
+            bottom: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              color: Colors.white.withValues(alpha: 0.6),
+              child: Text(
+                _mode == CellkaMapMode.scheme
+                    ? '© OpenStreetMap contributors'
+                    : 'Tiles © Esri — Maxar, Earthstar Geographics',
+                style: const TextStyle(fontSize: 10, color: Colors.black87),
+              ),
+            ),
           ),
           Positioned(
             left: 12,
