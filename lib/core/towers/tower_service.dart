@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../db/app_database.dart';
 import '../models/cell_info.dart';
+import 'towers_repository.dart';
 
 /// Координаты базовой станции из OpenCelliD.
 class TowerLocation {
@@ -25,7 +26,7 @@ class TowerLocation {
 /// Статус поиска вышки — для явной диагностики на девайсе.
 enum TowerLookupStatus {
   ok, // координаты найдены
-  notFound, // соты нет в базе OpenCelliD
+  notFound, // соты нет ни в одном источнике
   noKey, // нет API-ключа (dart-define не передан)
   invalidKey, // 401 — ключ не принят
   forbidden, // 403 — ключ не в белом списке (нужно делиться замерами)
@@ -38,9 +39,9 @@ class TowerResult {
   const TowerResult(this.status, [this.location]);
 }
 
-/// Поиск координат вышки по идентификаторам соты через OpenCelliD API.
-/// Успешные результаты кэшируются в sqflite (таблица tower_cache),
-/// чтобы не дёргать API при каждом handover и не сжигать дневной лимит.
+/// Поиск координат вышки по идентификаторам соты.
+/// Порядок источников: sqflite-кэш → локальный дамп OpenCelliD
+/// (офлайн, без лимитов) → API cell/get → (в вызывающем коде) наша оценка.
 class TowerService {
   /// Ключ передаётся через --dart-define=OPENCELLID_API_KEY=...
   /// и не коммитится в репозиторий.
@@ -60,6 +61,7 @@ class TowerService {
   };
 
   final HttpClient _http = HttpClient()..connectionTimeout = _timeout;
+  final TowersRepository _towersRepo = TowersRepository();
 
   bool get hasKey => _apiKey.isNotEmpty;
 
@@ -78,6 +80,14 @@ class TowerService {
 
     final cached = await _fromCache(cellKey);
     if (cached != null) return TowerResult(TowerLookupStatus.ok, cached);
+
+    // Локальный дамп — офлайн и без API-лимитов.
+    final local = await _fromLocalTowers(serving);
+    if (local != null) {
+      await _toCache(cellKey, local);
+      return TowerResult(TowerLookupStatus.ok, local);
+    }
+
     if (!hasKey) return const TowerResult(TowerLookupStatus.noKey);
 
     final area = serving.tac ?? serving.lac;
@@ -129,6 +139,32 @@ class TowerService {
     } catch (_) {
       return const TowerResult(TowerLookupStatus.error);
     }
+  }
+
+  /// Поиск в скачанном дампе OpenCelliD (таблица towers).
+  Future<TowerLocation?> _fromLocalTowers(CellInfo serving) async {
+    final area = serving.tac ?? serving.lac;
+    final id = serving.ci ?? serving.nci;
+    if (serving.mcc == null || serving.mnc == null || area == null) {
+      return null;
+    }
+    if (id == null) return null;
+    final radio = _radioMap[serving.technology];
+    if (radio == null) return null;
+    final t = await _towersRepo.findCell(
+      radio: radio,
+      mcc: serving.mcc!,
+      mnc: serving.mnc!,
+      area: area,
+      cell: id,
+    );
+    if (t == null) return null;
+    return TowerLocation(
+      lat: t.lat,
+      lon: t.lon,
+      rangeM: t.range,
+      samples: t.samples,
+    );
   }
 
   Future<TowerLocation?> _fromCache(String cellKey) async {

@@ -73,6 +73,25 @@ class TowersRepository {
     return (r.first['c'] as num).toInt();
   }
 
+  /// Точный поиск соты по идентификаторам — для линии к вышке.
+  Future<Tower?> findCell({
+    required String radio,
+    required int mcc,
+    required int mnc,
+    required int area,
+    required int cell,
+  }) async {
+    final db = await _db;
+    final rows = await db.query(
+      'towers',
+      where: 'radio = ? AND mcc = ? AND mnc = ? AND area = ? AND cell = ?',
+      whereArgs: [radio, mcc, mnc, area, cell],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _fromRow(rows.first);
+  }
+
   /// Вышки в видимой области. Пустой [mncs] — все операторы.
   Future<List<Tower>> inBbox({
     required double southLat,
@@ -100,23 +119,21 @@ class TowersRepository {
       orderBy: 'samples DESC',
       limit: limit,
     );
-    return rows
-        .map(
-          (r) => Tower(
-            radio: r['radio'] as String,
-            mnc: (r['mnc'] as num).toInt(),
-            area: (r['area'] as num).toInt(),
-            cell: (r['cell'] as num).toInt(),
-            lat: (r['lat'] as num).toDouble(),
-            lon: (r['lon'] as num).toDouble(),
-            range: (r['range'] as num?)?.toInt(),
-            samples: (r['samples'] as num?)?.toInt(),
-            updated: (r['updated'] as num?)?.toInt(),
-            changeable: (r['changeable'] as num?)?.toInt(),
-          ),
-        )
-        .toList();
+    return rows.map(_fromRow).toList();
   }
+
+  Tower _fromRow(Map<String, Object?> r) => Tower(
+        radio: r['radio'] as String,
+        mnc: (r['mnc'] as num).toInt(),
+        area: (r['area'] as num).toInt(),
+        cell: (r['cell'] as num).toInt(),
+        lat: (r['lat'] as num).toDouble(),
+        lon: (r['lon'] as num).toDouble(),
+        range: (r['range'] as num?)?.toInt(),
+        samples: (r['samples'] as num?)?.toInt(),
+        updated: (r['updated'] as num?)?.toInt(),
+        changeable: (r['changeable'] as num?)?.toInt(),
+      );
 
   /// Batch-вставка строк дампа одной транзакцией.
   Future<void> insertBatch(List<Map<String, Object?>> rows) async {
