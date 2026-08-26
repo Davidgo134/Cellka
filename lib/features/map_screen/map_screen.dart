@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:yandex_mapkit/yandex_mapkit.dart';
 
+import '../../core/db/track_repository.dart';
 import '../../core/models/cell_info.dart';
 import '../../core/permissions/permission_service.dart';
 import '../../core/recording/recording_service.dart';
 import '../../core/telephony/telephony_service.dart';
+import '../../core/towers/cell_estimator.dart';
 import '../../core/towers/tower_service.dart';
 import 'signal_strip.dart';
 
@@ -65,13 +67,15 @@ class _MapScreenState extends State<MapScreen> {
     if (_recorder.isRecording) {
       await _recorder.stop();
       if (mounted) {
+        var text = 'Трек сохранён: ${_recorder.pointCount} точек · '
+            '${_recorder.distanceM.round()} м';
+        if (_recorder.lastShareOk == true) {
+          text += ' · отправлен в OpenCelliD';
+        } else if (_recorder.lastShareOk == false) {
+          text += ' · OpenCelliD: ошибка отправки';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Трек сохранён: ${_recorder.pointCount} точек · '
-              '${_recorder.distanceM.round()} м',
-            ),
-          ),
+          SnackBar(content: Text(text)),
         );
       }
       return;
@@ -80,7 +84,41 @@ class _MapScreenState extends State<MapScreen> {
       await _requestPermissions();
       if (!_permissionsGranted) return;
     }
+    await _maybeAskSharing();
+    if (!mounted) return;
     await _recorder.start();
+  }
+
+  /// Опт-in на отправку замеров в OpenCelliD — спрашиваем один раз,
+  /// ответ хранится в таблице settings.
+  Future<void> _maybeAskSharing() async {
+    if (!_towers.hasKey) return;
+    final repo = TrackRepository();
+    final current = await repo.getSetting('share_opencellid');
+    if (current != null || !mounted) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Делиться замерами?'),
+        content: const Text(
+          'Cellka может отправлять записанные замеры в OpenCelliD после '
+          'остановки трека. Это наполняет открытую базу вышек (в т.ч. '
+          'добавит соты, которых там нет) и разблокирует полный доступ '
+          'к их API для приложения.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Нет'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Делиться'),
+          ),
+        ],
+      ),
+    );
+    await repo.setSetting('share_opencellid', yes == true ? '1' : '0');
   }
 
   Future<void> _initPermissionsAndStream() async {
@@ -125,7 +163,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   /// Линия «пользователь → обслуживающая вышка» как в CellMapper.
-  /// Координаты вышки — из OpenCelliD (с локальным кэшем).
+  /// Источники координат по приоритету: OpenCelliD → наша оценка.
   Future<void> _updateTowerLink(CellInfo? serving) async {
     if (serving == null) {
       _lastTowerKey = null;
@@ -165,12 +203,34 @@ class _MapScreenState extends State<MapScreen> {
         _warnOnce(
           'forbidden',
           'OpenCelliD: ключ не в белом списке (403). Лечится отправкой '
-          'замеров — добавим в следующей фазе',
+          'замеров — диалог при старте записи',
         );
         setState(() => _mapObjects = []);
       case TowerLookupStatus.notFound:
-        _warnOnce('notfound', 'Текущей соты нет в базе OpenCelliD');
-        setState(() => _mapObjects = []);
+        // Соты нет в базе — пробуем собственную оценку позиции.
+        final est = await CellEstimator.instance.estimate(
+          CellEstimator.keyOf(serving),
+        );
+        if (!mounted || key != _lastTowerKey) return;
+        if (est != null) {
+          _warnOnce(
+            'estimate',
+            'Вышки нет в OpenCelliD — на карте наша оценка '
+            '(${est.samples} замеров)',
+          );
+          await _drawTowerLink(
+            serving,
+            TowerLocation(lat: est.lat, lon: est.lon),
+            estimated: true,
+          );
+        } else {
+          _warnOnce(
+            'notfound',
+            'Соты нет в базе OpenCelliD — оценка позиции появится '
+            'после ≥5 замеров с ней',
+          );
+          setState(() => _mapObjects = []);
+        }
       case TowerLookupStatus.error:
         // Молча: ретрай через 30 с по троттлингу выше.
         _lastTowerKey = null;
@@ -186,7 +246,11 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Future<void> _drawTowerLink(CellInfo serving, TowerLocation loc) async {
+  Future<void> _drawTowerLink(
+    CellInfo serving,
+    TowerLocation loc, {
+    bool estimated = false,
+  }) async {
     final userPoint = await _userPoint();
     if (!mounted) return;
     if (userPoint == null) {
@@ -195,13 +259,14 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final towerPoint = Point(latitude: loc.lat, longitude: loc.lon);
-    final color = signalColor(serving.rsrp);
+    final color = estimated ? Colors.white70 : signalColor(serving.rsrp);
     setState(() {
       _mapObjects = [
         CircleMapObject(
           mapId: const MapObjectId('serving_tower'),
           circle: Circle(center: towerPoint, radius: 25),
-          fillColor: color.withValues(alpha: 0.35),
+          fillColor:
+              estimated ? Colors.transparent : color.withValues(alpha: 0.35),
           strokeColor: color,
           strokeWidth: 2,
           zIndex: 2,
@@ -210,7 +275,7 @@ class _MapScreenState extends State<MapScreen> {
           mapId: const MapObjectId('serving_link'),
           polyline: Polyline(points: [userPoint, towerPoint]),
           strokeColor: color,
-          strokeWidth: 3,
+          strokeWidth: estimated ? 2 : 3,
           zIndex: 1,
         ),
       ];

@@ -121,9 +121,45 @@ class TrackRepository {
     );
   }
 
+  /// Точки трека, пригодные для отправки в OpenCelliD:
+  /// serving-сота с известными координатами.
+  Future<List<Map<String, Object?>>> measurementsForUpload(
+    String trackId,
+  ) async {
+    final db = await _db;
+    return db.query(
+      'measurements',
+      where:
+          'track_id = ? AND lat IS NOT NULL AND lon IS NOT NULL AND registered = 1',
+      whereArgs: [trackId],
+      orderBy: 'ts ASC',
+    );
+  }
+
   Future<void> deleteTrack(String id) async {
     final db = await _db;
     await db.delete('tracks', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<String?> getSetting(String key) async {
+    final db = await _db;
+    final rows = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String?;
+  }
+
+  Future<void> setSetting(String key, String value) async {
+    final db = await _db;
+    await db.insert(
+      'settings',
+      {'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 }
 

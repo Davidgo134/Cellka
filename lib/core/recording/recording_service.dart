@@ -8,6 +8,8 @@ import 'package:uuid/uuid.dart';
 import '../db/track_repository.dart';
 import '../models/cell_info.dart';
 import '../telephony/telephony_service.dart';
+import '../towers/cell_estimator.dart';
+import '../towers/opencellid_uploader.dart';
 
 /// Запись треков: GPS + телеметрия соты → локальная БД.
 ///
@@ -18,6 +20,7 @@ class RecordingService extends ChangeNotifier {
 
   final TelephonyService _telephony;
   final TrackRepository _repo = TrackRepository();
+  final OpenCelliDUploader _uploader = OpenCelliDUploader();
 
   static const _flushEvery = Duration(seconds: 10);
   static const _flushThreshold = 50; // порог batch-insert
@@ -40,6 +43,8 @@ class RecordingService extends ChangeNotifier {
   int? _lastBand;
   String? _operator; // mcc-mnc обслуживающей соты
 
+  bool _shareEnabled = false;
+
   int _pointCount = 0;
   double _distanceM = 0;
   final List<Map<String, Object?>> _buffer = [];
@@ -47,6 +52,9 @@ class RecordingService extends ChangeNotifier {
   bool get isRecording => _recording;
   int get pointCount => _pointCount;
   double get distanceM => _distanceM;
+
+  /// null — отправки не было; true/false — итог отправки в OpenCelliD.
+  bool? lastShareOk;
 
   Future<void> start() async {
     if (_recording) return;
@@ -62,6 +70,8 @@ class RecordingService extends ChangeNotifier {
     _lastPci = null;
     _lastBand = null;
     _operator = null;
+    lastShareOk = null;
+    _shareEnabled = await _repo.getSetting('share_opencellid') == '1';
 
     await _repo.createTrack(_trackId!, DateTime.now());
 
@@ -107,6 +117,10 @@ class RecordingService extends ChangeNotifier {
         _distanceM,
         _operator,
       );
+      if (_shareEnabled && _uploader.hasKey) {
+        // Один multipart-запрос с JSON всех точек трека.
+        lastShareOk = await _uploader.uploadTrack(id);
+      }
     }
     _trackId = null;
     notifyListeners();
@@ -171,6 +185,8 @@ class RecordingService extends ChangeNotifier {
     if (pos != null) {
       if (_lastSavedPos != null && moved.isFinite) _distanceM += moved;
       _lastSavedPos = pos;
+      // Обновляем собственную оценку позиции вышки.
+      unawaited(CellEstimator.instance.update(serving, pos));
     }
     _lastSavedAt = now;
     _lastServingKey = key;
