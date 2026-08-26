@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/db/track_repository.dart';
+import 'export_sheet.dart';
 import 'track_view_screen.dart';
 
 /// Экран истории записанных треков.
@@ -93,7 +94,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             '${t.operator != null ? ' · ${t.operator}' : ''}'
                             '${_fmtDuration(t)}',
                           ),
-                          trailing: const Icon(Icons.chevron_right),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.ios_share, size: 20),
+                            tooltip: 'Экспорт',
+                            onPressed: () => showExportSheet(context, t),
+                          ),
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => TrackViewScreen(track: t),

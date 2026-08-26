@@ -5,6 +5,7 @@ import 'package:yandex_mapkit/yandex_mapkit.dart';
 
 import '../../core/db/track_repository.dart';
 import '../map_screen/signal_strip.dart';
+import 'export_sheet.dart';
 
 /// Просмотр сохранённого трека: полилиния маршрута + точки замеров
 /// с цветом по уровню сигнала.
@@ -123,6 +124,13 @@ class _TrackViewScreenState extends State<TrackViewScreen> {
           '${t.startedAt.hour.toString().padLeft(2, '0')}:'
           '${t.startedAt.minute.toString().padLeft(2, '0')}',
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: 'Экспорт',
+            onPressed: () => showExportSheet(context, t),
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())

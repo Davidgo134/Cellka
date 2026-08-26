@@ -1,21 +1,25 @@
 name: cellka
-description: Open-source cellular network mapper with satellite map view (Yandex MapKit).
-publish_to: 'none'
+description: "Cellka — карта вышек, запись и анализ мобильной сети"
+publish_to: "none"
 version: 0.1.0+1
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: ^3.5.0
 
 dependencies:
   flutter:
     sdk: flutter
-  yandex_mapkit: ^4.0.0
+  yandex_mapkit: ^4.3.0
   geolocator: ^12.0.0
-  sqflite: ^2.3.3
-  path_provider: ^2.1.3
-  provider: ^6.1.2
-  permission_handler: ^11.3.1
+  permission_handler: ^11.4.0
+  sqflite: ^2.4.3
+  path_provider: ^2.1.6
+  path: ^1.9.1
+  uuid: ^4.6.0
+  equatable: ^2.1.0
+  provider: ^6.1.5+1
   intl: ^0.19.0
+  share_plus: ^11.0.0
 
 dev_dependencies:
   flutter_test:
