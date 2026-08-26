@@ -2,14 +2,14 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 /// Локальная БД Cellka (sqflite).
-/// Схема v3: tracks + measurements + handovers + tower_cache
-/// + cell_estimates + settings.
+/// Схема v4: tracks + measurements + handovers + tower_cache
+/// + cell_estimates + settings + towers.
 class AppDatabase {
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'cellka.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -93,6 +93,7 @@ class AppDatabase {
         );
         await _createTowerCache(db);
         await _createV3Tables(db);
+        await _createV4Tables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -100,6 +101,9 @@ class AppDatabase {
         }
         if (oldVersion < 3) {
           await _createV3Tables(db);
+        }
+        if (oldVersion < 4) {
+          await _createV4Tables(db);
         }
       },
     );
@@ -135,6 +139,29 @@ class AppDatabase {
         value TEXT
       )
     ''');
+  }
+
+  Future<void> _createV4Tables(Database db) async {
+    // Справочник вышек из bulk-дампа OpenCelliD (CC BY-SA 4.0).
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS towers(
+        radio TEXT NOT NULL,
+        mcc INTEGER NOT NULL,
+        mnc INTEGER NOT NULL,
+        area INTEGER NOT NULL,
+        cell INTEGER NOT NULL,
+        lon REAL NOT NULL,
+        lat REAL NOT NULL,
+        range INTEGER,
+        samples INTEGER,
+        changeable INTEGER,
+        updated INTEGER,
+        avg_signal INTEGER,
+        PRIMARY KEY (radio, mcc, mnc, area, cell)
+      )
+    ''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_towers_lat ON towers(lat)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_towers_lon ON towers(lon)');
   }
 
   Future<void> close() async {

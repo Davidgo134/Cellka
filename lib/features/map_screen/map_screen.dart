@@ -10,8 +10,11 @@ import '../../core/permissions/permission_service.dart';
 import '../../core/recording/recording_service.dart';
 import '../../core/telephony/telephony_service.dart';
 import '../../core/towers/cell_estimator.dart';
+import '../../core/towers/tower_download_service.dart';
 import '../../core/towers/tower_service.dart';
+import '../../core/towers/towers_repository.dart';
 import 'signal_strip.dart';
+import 'tower_layer_sheet.dart';
 
 /// Главный экран: карта Yandex + signal strip + FAB-стек.
 class MapScreen extends StatefulWidget {
@@ -26,9 +29,14 @@ class _MapScreenState extends State<MapScreen> {
   static const _fallbackTarget =
       Point(latitude: 55.751244, longitude: 37.618423);
 
+  /// Минимальный зум для слоя вышек (иначе слишком плотно).
+  static const _towersMinZoom = 12.0;
+
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
   final _towers = TowerService();
+  final _towersRepo = TowersRepository();
+  final _downloader = TowerDownloadService();
   late final RecordingService _recorder;
 
   YandexMapController? _mapController;
@@ -43,11 +51,18 @@ class _MapScreenState extends State<MapScreen> {
   bool _autoMovedToUser = false;
 
   /// Линия к обслуживающей вышке + её маркер.
-  List<MapObject> _mapObjects = [];
+  List<MapObject> _linkObjects = [];
   String? _lastTowerKey;
   String? _lastErrorKey;
   DateTime _lastErrorAt = DateTime.fromMillisecondsSinceEpoch(0);
   final Set<String> _warned = {};
+
+  /// Слой вышек выбранных операторов.
+  List<MapObject> _towerLayerObjects = [];
+  bool _towersEnabled = false;
+  Set<int> _selectedMncs = {};
+  int _towersCount = 0;
+  DateTime? _towersLoadedAt;
 
   bool get _isRecording => _recorder.isRecording;
 
@@ -57,11 +72,138 @@ class _MapScreenState extends State<MapScreen> {
     _recorder = RecordingService(_telephony);
     _recorder.addListener(_onRecorderChanged);
     _initPermissionsAndStream();
+    _loadTowerLayerSettings();
   }
 
   void _onRecorderChanged() {
     if (mounted) setState(() {});
   }
+
+  // ─── Слой вышек ──────────────────────────────────────────────────────────
+
+  Future<void> _loadTowerLayerSettings() async {
+    final repo = TrackRepository();
+    final enabled = await repo.getSetting('towers_enabled') == '1';
+    final mncsRaw = await repo.getSetting('towers_mncs');
+    final count = await _towersRepo.count();
+    final loadedAtRaw = await repo.getSetting('towers_loaded_at');
+    if (!mounted) return;
+    setState(() {
+      _towersEnabled = enabled;
+      _selectedMncs = mncsRaw == null || mncsRaw.isEmpty
+          ? kRuOperators.map((o) => o.mnc).toSet()
+          : mncsRaw
+              .split(',')
+              .map(int.tryParse)
+              .whereType<int>()
+              .toSet();
+      _towersCount = count;
+      _towersLoadedAt =
+          loadedAtRaw != null ? DateTime.tryParse(loadedAtRaw) : null;
+    });
+    if (enabled) _loadTowersInView();
+  }
+
+  Future<void> _saveTowerLayerSettings(bool enabled, Set<int> mncs) async {
+    final repo = TrackRepository();
+    await repo.setSetting('towers_enabled', enabled ? '1' : '0');
+    await repo.setSetting('towers_mncs', mncs.join(','));
+  }
+
+  Future<void> _openTowerSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => TowerLayerSheet(
+        enabled: _towersEnabled,
+        selectedMncs: _selectedMncs,
+        towersCount: _towersCount,
+        loadedAt: _towersLoadedAt,
+        onChanged: (enabled, mncs) {
+          setState(() {
+            _towersEnabled = enabled;
+            _selectedMncs = mncs;
+          });
+          _saveTowerLayerSettings(enabled, mncs);
+          if (enabled) {
+            _loadTowersInView();
+          } else if (mounted) {
+            setState(() => _towerLayerObjects = []);
+          }
+        },
+        onDownload: (onProgress) async {
+          final count = await _downloader.downloadAndImport(
+            onProgress: onProgress,
+          );
+          final repo = TrackRepository();
+          await repo.setSetting(
+            'towers_loaded_at',
+            DateTime.now().toIso8601String(),
+          );
+          if (mounted) {
+            setState(() {
+              _towersCount = count;
+              _towersLoadedAt = DateTime.now();
+            });
+            if (_towersEnabled) _loadTowersInView();
+          }
+          return count;
+        },
+      ),
+    );
+  }
+
+  /// Загрузка вышек видимой области из локальной базы (после дампа).
+  Future<void> _loadTowersInView() async {
+    if (!_towersEnabled || _towersCount == 0) return;
+    final controller = _mapController;
+    if (controller == null) return;
+
+    try {
+      final cam = await controller.getCameraPosition();
+      if (cam.zoom < _towersMinZoom) {
+        if (_towerLayerObjects.isNotEmpty && mounted) {
+          setState(() => _towerLayerObjects = []);
+        }
+        return;
+      }
+      final region = await controller.getVisibleRegion();
+      final sw = region.bottomLeft;
+      final ne = region.topRight;
+      // Запас 25% за края экрана — меньше дозагрузок при панорамировании.
+      final latPad = (ne.latitude - sw.latitude) * 0.25;
+      final lonPad = (ne.longitude - sw.longitude) * 0.25;
+
+      final towers = await _towersRepo.inBbox(
+        southLat: sw.latitude - latPad,
+        northLat: ne.latitude + latPad,
+        westLon: sw.longitude - lonPad,
+        eastLon: ne.longitude + lonPad,
+        mncs: _selectedMncs,
+      );
+      if (!mounted) return;
+      setState(() {
+        _towerLayerObjects = [
+          for (final t in towers)
+            CircleMapObject(
+              mapId: MapObjectId(
+                'tower_${t.radio}_${t.mnc}_${t.lat}_${t.lon}',
+              ),
+              circle: Circle(
+                center: Point(latitude: t.lat, longitude: t.lon),
+                radius: 8,
+              ),
+              fillColor: colorForMnc(t.mnc).withValues(alpha: 0.8),
+              strokeColor: Colors.transparent,
+              strokeWidth: 0,
+              zIndex: 0,
+            ),
+        ];
+      });
+    } catch (_) {}
+  }
+
+  // ─── Запись ───────────────────────────────────────────────────────────────
 
   Future<void> _toggleRecording() async {
     if (_recorder.isRecording) {
@@ -126,8 +268,6 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) setState(() => _permissionsGranted = granted);
 
     if (granted) {
-      // User layer мог быть включён до выдачи пермишна — включаем повторно
-      // и сразу летим к последней известной/текущей позиции.
       await _enableUserLayer();
       await _moveToUser();
     }
@@ -167,8 +307,8 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _updateTowerLink(CellInfo? serving) async {
     if (serving == null) {
       _lastTowerKey = null;
-      if (_mapObjects.isNotEmpty && mounted) {
-        setState(() => _mapObjects = []);
+      if (_linkObjects.isNotEmpty && mounted) {
+        setState(() => _linkObjects = []);
       }
       return;
     }
@@ -192,20 +332,20 @@ class _MapScreenState extends State<MapScreen> {
         await _drawTowerLink(serving, result.location!);
       case TowerLookupStatus.noKey:
         _warnOnce('nokey', 'Нет ключа OpenCelliD — линия к вышке отключена');
-        setState(() => _mapObjects = []);
+        setState(() => _linkObjects = []);
       case TowerLookupStatus.invalidKey:
         _warnOnce(
           'badkey',
           'OpenCelliD: ключ не принят (401) — проверь секрет в CI',
         );
-        setState(() => _mapObjects = []);
+        setState(() => _linkObjects = []);
       case TowerLookupStatus.forbidden:
         _warnOnce(
           'forbidden',
           'OpenCelliD: ключ не в белом списке (403). Лечится отправкой '
           'замеров — диалог при старте записи',
         );
-        setState(() => _mapObjects = []);
+        setState(() => _linkObjects = []);
       case TowerLookupStatus.notFound:
         // Соты нет в базе — пробуем собственную оценку позиции.
         final est = await CellEstimator.instance.estimate(
@@ -229,7 +369,7 @@ class _MapScreenState extends State<MapScreen> {
             'Соты нет в базе OpenCelliD — оценка позиции появится '
             'после ≥5 замеров с ней',
           );
-          setState(() => _mapObjects = []);
+          setState(() => _linkObjects = []);
         }
       case TowerLookupStatus.error:
         // Молча: ретрай через 30 с по троттлингу выше.
@@ -254,14 +394,14 @@ class _MapScreenState extends State<MapScreen> {
     final userPoint = await _userPoint();
     if (!mounted) return;
     if (userPoint == null) {
-      setState(() => _mapObjects = []);
+      setState(() => _linkObjects = []);
       return;
     }
 
     final towerPoint = Point(latitude: loc.lat, longitude: loc.lon);
     final color = estimated ? Colors.white70 : signalColor(serving.rsrp);
     setState(() {
-      _mapObjects = [
+      _linkObjects = [
         CircleMapObject(
           mapId: const MapObjectId('serving_tower'),
           circle: Circle(center: towerPoint, radius: 25),
@@ -311,8 +451,6 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       Position? pos = await Geolocator.getLastKnownPosition();
-      // geolocator 12: getCurrentPosition принимает desiredAccuracy/timeLimit
-      // напрямую (locationSettings — только у getPositionStream).
       pos ??= await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.medium,
         timeLimit: const Duration(seconds: 6),
@@ -345,7 +483,6 @@ class _MapScreenState extends State<MapScreen> {
       );
       return;
     }
-    // User layer ещё без фикса — пробуем через геолокатор напрямую.
     await _moveToUser(force: true);
   }
 
@@ -389,7 +526,10 @@ class _MapScreenState extends State<MapScreen> {
           YandexMap(
             mapType: _mapType,
             nightModeEnabled: false,
-            mapObjects: _mapObjects,
+            mapObjects: [..._towerLayerObjects, ..._linkObjects],
+            onCameraPositionChanged: (position, reason, finished) {
+              if (finished) _loadTowersInView();
+            },
             onMapCreated: (controller) async {
               _mapController = controller;
               // Стартовый вид: кэшированная позиция или центр Москвы,
@@ -438,6 +578,13 @@ class _MapScreenState extends State<MapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            FloatingActionButton.small(
+              heroTag: 'towers',
+              tooltip: 'Слой вышек',
+              onPressed: _openTowerSheet,
+              child: const Icon(Icons.cell_tower),
+            ),
+            const SizedBox(height: 12),
             FloatingActionButton.small(
               heroTag: 'record',
               tooltip: _isRecording ? 'Остановить запись' : 'Запись трека',
