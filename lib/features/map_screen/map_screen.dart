@@ -45,6 +45,9 @@ class _MapScreenState extends State<MapScreen> {
   /// Дефолтная точка (центр Москвы), если нет ни кэша позиции, ни фикса.
   static const _fallbackPoint = LatLng(55.751244, 37.618423);
 
+  /// База вышек старше этого возраста обновляется автоматически.
+  static const _towersMaxAge = Duration(days: 7);
+
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
   final _towers = TowerService();
@@ -85,6 +88,10 @@ class _MapScreenState extends State<MapScreen> {
   int _towersCount = 0;
   DateTime? _towersLoadedAt;
   List<double>? _lastQueryBbox;
+
+  /// Автозагрузка/обновление базы вышек: прогресс 0..1 (null — не качаем).
+  double? _downloadProgress;
+  String? _downloadError;
 
   /// Heatmap собственных замеров.
   List<CircleMarker> _measurementCircles = [];
@@ -134,6 +141,57 @@ class _MapScreenState extends State<MapScreen> {
     });
     _loadTowersInView();
     _loadMeasurementsInView();
+    _maybeAutoDownloadTowers();
+  }
+
+  /// Автозагрузка базы вышек: при первом запуске (таблица пуста) и при
+  /// автообновлении (дамп старше 7 дней). Баннер с прогрессом сверху.
+  Future<void> _maybeAutoDownloadTowers() async {
+    final fresh = _towersLoadedAt != null &&
+        DateTime.now().difference(_towersLoadedAt!) < _towersMaxAge;
+    if (_towersCount > 0 && fresh) return;
+    if (_downloadProgress != null) return; // уже качаем
+
+    setState(() {
+      _downloadProgress = -1; // indeterminate до первых байтов
+      _downloadError = null;
+    });
+    try {
+      final count = await _downloader.downloadAndImport(
+        onProgress: (p) {
+          if (mounted) setState(() => _downloadProgress = p);
+        },
+      );
+      final repo = TrackRepository();
+      await repo.setSetting(
+        'towers_loaded_at',
+        DateTime.now().toIso8601String(),
+      );
+      // После первой загрузки включаем слой сами.
+      if (!_towersEnabled) {
+        _towersEnabled = true;
+        _saveLayerSettings(true, _selectedMncs, _showMeasurements);
+      }
+      if (!mounted) return;
+      setState(() {
+        _towersCount = count;
+        _towersLoadedAt = DateTime.now();
+        _downloadProgress = null;
+        _lastQueryBbox = null;
+      });
+      _loadTowersInView();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('База вышек загружена: $count')),
+      );
+    } catch (e) {
+      debugPrint('towers auto-download failed: $e');
+      if (mounted) {
+        setState(() {
+          _downloadProgress = null;
+          _downloadError = 'Не удалось скачать базу вышек';
+        });
+      }
+    }
   }
 
   Future<void> _saveLayerSettings(
@@ -241,10 +299,7 @@ class _MapScreenState extends State<MapScreen> {
       if (shown && mounted) setState(() => _towerMarkers = []);
       return;
     }
-    if (_towersCount == 0) {
-      _warnOnce('emptydb', 'База вышек пуста — скачай её в меню слоя');
-      return;
-    }
+    if (_towersCount == 0 && _downloadProgress == null) return;
     final bbox = _paddedBounds();
     if (bbox == null) return;
     if (_covered(_lastQueryBbox, bbox) && shown) return;
@@ -259,8 +314,9 @@ class _MapScreenState extends State<MapScreen> {
       );
       if (!mounted) return;
 
-      // Точки фиксированного размера — видны на любом зуме.
-      final size = zoom < 13 ? 22.0 : zoom < 15 ? 16.0 : 11.0;
+      // С зума 13 — значки-вышки, ниже — компактные точки.
+      final icons = zoom >= 13;
+      final size = icons ? 26.0 : zoom < 12.5 ? 14.0 : 10.0;
       setState(() {
         _towerMarkers = [
           for (final t in towers)
@@ -270,13 +326,29 @@ class _MapScreenState extends State<MapScreen> {
               height: size,
               child: GestureDetector(
                 onTap: () => _showTowerInfo(t),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: colorForMnc(t.mnc).withValues(alpha: 0.9),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 1.5),
-                  ),
-                ),
+                child: icons
+                    ? Container(
+                        decoration: BoxDecoration(
+                          color: colorForMnc(t.mnc),
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        padding: const EdgeInsets.all(3),
+                        child: const Icon(
+                          Icons.cell_tower,
+                          size: 15,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Container(
+                        decoration: BoxDecoration(
+                          color: colorForMnc(t.mnc).withValues(alpha: 0.9),
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.white, width: 1.5),
+                        ),
+                      ),
               ),
             ),
         ];
@@ -687,6 +759,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final topPadding = MediaQuery.of(context).padding.top;
 
     return Scaffold(
       body: Stack(
@@ -773,6 +846,60 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
+          // Баннер загрузки базы вышек.
+          if (_downloadProgress != null)
+            Positioned(
+              top: topPadding + 8,
+              left: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _towersCount > 0
+                          ? 'Обновляем базу вышек…'
+                          : 'Первый запуск: скачиваем базу вышек…',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: _downloadProgress! >= 0 &&
+                              _downloadProgress! <= 1
+                          ? _downloadProgress
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (_downloadError != null)
+            Positioned(
+              top: topPadding + 8,
+              left: 12,
+              right: 12,
+              child: GestureDetector(
+                onTap: _maybeAutoDownloadTowers,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade900.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$_downloadError · тап — повторить',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ),
+            ),
           // Статус вышки: нет в базе / оценочная позиция.
           if (_towerStatusNote != null)
             Positioned(

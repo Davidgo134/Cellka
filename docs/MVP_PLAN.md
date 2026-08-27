@@ -19,11 +19,12 @@
 - [x] Маппинг `CellInfoNr` (5G), `CellInfoWcdma`, `CellInfoGsm` (+ CDMA, TD-SCDMA)
 - [x] Dart-слой: `TelephonyService` + polling-стрим (1с) + `BandMapper` (bandFor с именованными параметрами) с юнит-тестами
 - [x] Тест на реальном девайсе: данные приходят, поля не null
+- [x] Фикс контракта: регистрация `CellInfoPlugin.registerWith(engine, context)`; fromMap читает ключ `technology`; UMTS/TDSCDMA в bandFor
 
 ## Фаза 2. Карта
 - [x] ~~yandex_mapkit~~ → flutter_map (Yandex ограничил спутник своими приложениями)
 - [x] Подложки циклом: Esri World Imagery (спутник) → гибрид (Esri + подписи) → OSM (схема); атрибуция на карте
-- [x] Маркеры вышек — tappable точки; heatmap и круг точности — CircleMarker в метрах; линия к вышке — Polyline
+- [x] Маркеры вышек: значки-вышки с зума 13, ниже — точки; тап → карточка; heatmap и круг точности — CircleMarker в метрах; линия к вышке — Polyline
 - [x] Позиция пользователя — свой маркер из geolocator-стрима
 - [x] yandex_mapkit удалён из pubspec и MainActivity (gradle-обвязка maps.mobile — мёртвый груз до чистки build.gradle)
 
@@ -31,6 +32,7 @@
 - [x] Виджет signal strip: технология, band, PCI, RSRP с цветовой индикацией
 - [x] Индикаторы статуса: GPS-fix, запись трека
 - [x] Тап по strip → экран Cell Details
+- [x] Cell Details простым языком: карточка-резюме уровня сигнала + (i)-объяснения всех параметров
 - [x] Про-параметры: eNodeB/сектор из CI, дуплекс TDD/FDD, частоты RX/TX из EARFCN, имя диапазона, RSSI; секции Идентификация/Радио/Сигнал
 - [x] Список соседних сот
 - [ ] Скорость соединения, CA-агрегации — после MVP
@@ -57,6 +59,7 @@
 ## Фаза 4.7. Слой вышек по операторам
 - [x] Схема БД v4: таблица `towers` + индексы
 - [x] `TowerDownloadService`: дамп MCC 250 стримом → импорт; зеркало через workflow → GitHub Release
+- [x] Автозагрузка базы при первом запуске + автообновление старше 7 дней (баннер с прогрессом сверху), слой включается сам
 - [x] `TowerLayerSheet`: переключатели операторов, статус базы, атрибуция OpenCelliD (CC BY-SA)
 - [x] Вьюпорт-загрузка: гистерезис зума, пропуск покрытого bbox, дебаунс камеры
 - [x] Тап по вышке → карточка Tower Info + «К вышке»
@@ -75,6 +78,6 @@
 ## Фаза 7. Релиз MVP
 - [x] Иконка приложения — генерация в CI (`tools/gen_icons.py`, PIL: столбики сигнала)
 - [x] Release-сборка APK через CI (`.github/workflows/release.yml`, подпись CI-ключом)
-- [x] GitHub Release по тегу `v*` с прикреплённым APK
+- [x] GitHub Release по тегу `v*` или ручному запуску с версией
 - [ ] Настоящий keystore в секретах (для обновлений поверх релизов)
 - [ ] Скриншоты в README

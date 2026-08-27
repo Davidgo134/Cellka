@@ -4,7 +4,8 @@ import '../../core/models/cell_info.dart';
 import '../../core/telephony/band_mapper.dart';
 import 'signal_strip.dart';
 
-/// Экран деталей текущей соты + список соседних.
+/// Экран деталей текущей соты: сначала простым языком, потом параметры
+/// с (i)-объяснениями, затем соседние соты.
 class CellDetailsScreen extends StatelessWidget {
   final CellInfo? cell;
   final List<CellInfo> allCells;
@@ -14,6 +15,37 @@ class CellDetailsScreen extends StatelessWidget {
     required this.cell,
     this.allCells = const [],
   });
+
+  /// Простые объяснения параметров для (i)-диалогов.
+  static const _explains = {
+    'plmn': 'MCC — код страны (250 — Россия), MNC — код оператора: '
+        '20 — t2, 2 — МегаФон, 1 — МТС, 99 — Билайн.',
+    'tac': 'Код зоны регистрации — район, в котором сеть «помнит» '
+        'ваш телефон для входящих звонков.',
+    'ci': 'Уникальный номер соты (сектора) в сети оператора.',
+    'enb': 'Номер базовой станции и сектора её антенны. Один eNodeB — '
+        'это обычно мачта с тремя секторами.',
+    'pci': 'Короткий идентификатор соты (0–503), по нему телефон '
+        'различает соты при переключении.',
+    'band': 'Частотный диапазон. Низкие (700–900 МГц) бьют далеко и '
+        'сквозь стены, высокие (2600+) — быстрее, но на меньшей дистанции.',
+    'earfcn': 'Номер канала — точная частота внутри диапазона.',
+    'duplex': 'TDD — приём и передача по очереди на одной частоте; '
+        'FDD — одновременно на двух разных.',
+    'rxtx': 'RX — частота, на которой телефон слушает вышку; '
+        'TX — на которой отвечает ей.',
+    'bw': 'Ширина канала в МГц: шире — выше скорость. '
+        '20 МГц — максимум одного LTE-канала.',
+    'rsrp': 'Уровень сигнала от вышки. До −80 dBm — отлично, '
+        'около −100 — средне, ниже −110 — плохо.',
+    'rsrq': 'Качество сигнала: насколько соседние вышки шумят в эфире. '
+        '−10 dB и выше — хорошо.',
+    'rssi': 'Общая мощность на частоте, включая шум и чужие сигналы.',
+    'sinr': 'Соотношение сигнал/шум. Выше 20 dB — отлично, '
+        'ниже 0 — помехи съедают скорость.',
+    'ta': 'Timing Advance — примерная дальность до вышки: '
+        '1 единица ≈ 78 метров.',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -27,13 +59,13 @@ class CellDetailsScreen extends StatelessWidget {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                _header(c),
+                _summaryCard(context, c),
                 const SizedBox(height: 16),
-                ..._identityRows(c),
+                ..._identityRows(context, c),
                 const SizedBox(height: 8),
-                ..._radioRows(c),
+                ..._radioRows(context, c),
                 const SizedBox(height: 8),
-                ..._signalRows(c),
+                ..._signalRows(context, c),
                 if (neighbors.isNotEmpty) ...[
                   const SizedBox(height: 24),
                   Text(
@@ -51,8 +83,21 @@ class CellDetailsScreen extends StatelessWidget {
     );
   }
 
-  Widget _header(CellInfo c) {
+  // ─── Простым языком ─────────────────────────────────────────────────────
+
+  /// Карточка-резюме: насколько всё хорошо и к чему мы подключены.
+  Widget _summaryCard(BuildContext context, CellInfo c) {
     final color = signalColor(c.rsrp);
+    final band = BandMapper.bandForEarfcn(c.earfcn);
+
+    final lines = <String>[
+      _signalVerdict(c.rsrp),
+      'Вы на ${c.technology}-соте'
+          '${band != null ? ' (Band $band, ${BandMapper.rxFreqMhz(c.earfcn)?.toStringAsFixed(0) ?? ''} МГц)' : ''}'
+          '${c.operator != null ? ' оператора ${c.operator}' : ''}.',
+      if (c.eNbId != null) 'Вышка: eNodeB ${c.eNbId}, сектор ${c.sectorId}.',
+    ];
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -61,27 +106,14 @@ class CellDetailsScreen extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.cell_tower, color: color, size: 36),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${c.technology}'
-                  '${c.operator != null ? ' · ${c.operator}' : ''}',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  '${c.rsrp ?? '—'} dBm'
-                  '${c.rsrq != null ? ' · RSRQ ${c.rsrq} dB' : ''}',
-                  style: TextStyle(fontSize: 14, color: color),
-                ),
-              ],
+            child: Text(
+              lines.join('\n'),
+              style: const TextStyle(fontSize: 14, height: 1.4),
             ),
           ),
         ],
@@ -89,18 +121,36 @@ class CellDetailsScreen extends StatelessWidget {
     );
   }
 
-  List<Widget> _identityRows(CellInfo c) {
-    final rows = <Widget>[
-      _row('Оператор (PLMN)', '${c.mcc ?? '—'}-${c.mnc ?? '—'}'),
-      _row('TAC / LAC', '${c.tac ?? c.lac ?? '—'}'),
-      _row('Cell ID', '${c.ci ?? c.nci ?? '—'}'),
-      if (c.eNbId != null) _row('eNodeB · сектор', '${c.eNbId}:${c.sectorId}'),
-      _row('PCI', '${c.pci ?? '—'}'),
-    ];
-    return [_section('Идентификация'), ...rows];
+  String _signalVerdict(int? rsrp) {
+    if (rsrp == null) return 'Данных об уровне сигнала нет.';
+    if (rsrp >= -80) return 'Сигнал отличный — всё будет летать.';
+    if (rsrp >= -90) return 'Сигнал хороший — видео и звонки без проблем.';
+    if (rsrp >= -100) {
+      return 'Сигнал средний — мессенджеры ок, видео может подтормаживать.';
+    }
+    if (rsrp >= -110) {
+      return 'Сигнал слабый — интернет медленный, возможны обрывы.';
+    }
+    return 'Сигнал очень слабый — связь на грани.';
   }
 
-  List<Widget> _radioRows(CellInfo c) {
+  // ─── Таблицы параметров ─────────────────────────────────────────────────
+
+  List<Widget> _identityRows(BuildContext context, CellInfo c) {
+    return [
+      _section('Идентификация'),
+      _row(context, 'Оператор (PLMN)', '${c.mcc ?? '—'}-${c.mnc ?? '—'}',
+          explain: 'plmn'),
+      _row(context, 'TAC / LAC', '${c.tac ?? c.lac ?? '—'}', explain: 'tac'),
+      _row(context, 'Cell ID', '${c.ci ?? c.nci ?? '—'}', explain: 'ci'),
+      if (c.eNbId != null)
+        _row(context, 'eNodeB · сектор', '${c.eNbId}:${c.sectorId}',
+            explain: 'enb'),
+      _row(context, 'PCI', '${c.pci ?? '—'}', explain: 'pci'),
+    ];
+  }
+
+  List<Widget> _radioRows(BuildContext context, CellInfo c) {
     final band = BandMapper.bandForEarfcn(c.earfcn);
     final rx = BandMapper.rxFreqMhz(c.earfcn);
     final tx = BandMapper.txFreqMhz(c.earfcn);
@@ -108,25 +158,36 @@ class CellDetailsScreen extends StatelessWidget {
     final bw = c.bandwidth;
     return [
       _section('Радио'),
-      _row('Диапазон', BandMapper.bandDisplay(band)),
-      _row('EARFCN', '${c.earfcn ?? '—'}'),
-      if (duplex != null) _row('Дуплекс', duplex),
-      if (rx != null) _row('RX (downlink)', '${rx.toStringAsFixed(1)} МГц'),
+      _row(context, 'Диапазон', BandMapper.bandDisplay(band),
+          explain: 'band'),
+      _row(context, 'EARFCN', '${c.earfcn ?? '—'}', explain: 'earfcn'),
+      if (duplex != null)
+        _row(context, 'Дуплекс', duplex, explain: 'duplex'),
+      if (rx != null)
+        _row(context, 'RX (downlink)', '${rx.toStringAsFixed(1)} МГц',
+            explain: 'rxtx'),
       if (tx != null && duplex != 'TDD')
-        _row('TX (uplink)', '${tx.toStringAsFixed(1)} МГц'),
+        _row(context, 'TX (uplink)', '${tx.toStringAsFixed(1)} МГц',
+            explain: 'rxtx'),
       if (bw != null && bw > 0)
-        _row('Ширина канала', '${(bw / 1000).toStringAsFixed(0)} МГц'),
+        _row(context, 'Ширина канала',
+            '${(bw / 1000).toStringAsFixed(0)} МГц',
+            explain: 'bw'),
     ];
   }
 
-  List<Widget> _signalRows(CellInfo c) {
+  List<Widget> _signalRows(BuildContext context, CellInfo c) {
     return [
       _section('Сигнал'),
-      _row('RSRP', '${c.rsrp ?? '—'} dBm'),
-      _row('RSRQ', '${c.rsrq ?? '—'} dB'),
-      if (c.rssi != null) _row('RSSI', '${c.rssi} dBm'),
-      if (c.sinr != null) _row('SINR', '${c.sinr} dB'),
-      if (c.ta != null) _row('Timing Advance', '${c.ta}'),
+      _row(context, 'RSRP', '${c.rsrp ?? '—'} dBm', explain: 'rsrp'),
+      _row(context, 'RSRQ', '${c.rsrq ?? '—'} dB', explain: 'rsrq'),
+      if (c.rssi != null)
+        _row(context, 'RSSI', '${c.rssi} dBm', explain: 'rssi'),
+      if (c.sinr != null)
+        _row(context, 'SINR', '${c.sinr} dB', explain: 'sinr'),
+      if (c.ta != null)
+        _row(context, 'Timing Advance', '${c.ta}',
+            explain: 'ta'),
     ];
   }
 
@@ -165,14 +226,54 @@ class CellDetailsScreen extends StatelessWidget {
         ),
       );
 
-  Widget _row(String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: const TextStyle(color: Colors.white70)),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
-          ],
-        ),
-      );
+  Widget _row(BuildContext context, String label, String value,
+      {String? explain}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ),
+                if (explain != null) ...[
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => _showExplain(context, label, explain),
+                    child: const Icon(
+                      Icons.info_outline,
+                      size: 15,
+                      color: Colors.white38,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  void _showExplain(BuildContext context, String label, String key) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(label),
+        content: Text(_explains[key] ?? ''),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Понятно'),
+          ),
+        ],
+      ),
+    );
+  }
 }
