@@ -10,6 +10,10 @@ on:
         required: true
         default: 'v0.1.1'
 
+# Иначе GITHUB_TOKEN с дефолтным read-only не может создать релиз (403).
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
