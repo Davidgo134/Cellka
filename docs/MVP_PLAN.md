@@ -77,7 +77,8 @@
 
 ## Фаза 7. Релиз MVP
 - [x] Иконка приложения — генерация в CI (`tools/gen_icons.py`, PIL: столбики сигнала)
-- [x] Release-сборка APK через CI (`.github/workflows/release.yml`, подпись CI-ключом)
+- [x] Release-сборка APK через CI (`.github/workflows/release.yml`, `flutter build apk --release`)
 - [x] GitHub Release по тегу `v*` или ручному запуску с версией
-- [ ] Настоящий keystore в секретах (для обновлений поверх релизов)
+- [x] Автоверсия из тега: v0.1.1 → versionName 0.1.1, versionCode 101 (major·10000 + minor·100 + patch)
+- [x] Настоящий keystore (PKCS#12, RSA-2048, 30 лет): секреты KEYSTORE_BASE64/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD; без них — фолбэк на одноразовый CI-ключ
 - [ ] Скриншоты в README

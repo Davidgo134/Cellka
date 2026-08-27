@@ -8,7 +8,7 @@ on:
       tag:
         description: 'Версия релиза (создаст тег и релиз с APK)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.1.1'
 
 jobs:
   release:
@@ -38,26 +38,52 @@ jobs:
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
 
+      # v0.1.1 → versionName 0.1.1, versionCode 101 (major·10000 + minor·100 + patch)
+      - name: Version from tag
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          V="${TAG#v}"
+          IFS=. read -r MA MI PA <<< "$V"
+          CODE=$(( 10#$MA * 10000 + 10#$MI * 100 + 10#${PA:-0} ))
+          echo "name=$V" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
       - name: Build release APK
         env:
           MAPKIT_API_KEY: ${{ secrets.YANDEX_MAPKIT_API_KEY }}
         run: >-
           flutter build apk --release
+          --build-name=${{ steps.ver.outputs.name }}
+          --build-number=${{ steps.ver.outputs.code }}
           --dart-define=OPENCELLID_API_KEY=${{ secrets.OPENCELLID_API_KEY }}
 
-      # MVP: подписываем одноразовым ключом, генерируемым в CI.
-      # Для публикации заменить на настоящий keystore из секретов.
+      # Если в секретах лежит KEYSTORE_BASE64 — подписываем настоящим
+      # ключом (обновления ставятся поверх). Иначе — одноразовый CI-ключ.
       - name: Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           set -e
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           APK=build/app/outputs/flutter-apk/app-release-unsigned.apk
-          keytool -genkeypair -v -keystore ci.jks -alias cellka \
-            -keyalg RSA -keysize 2048 -validity 36500 \
-            -storepass cellka-ci -keypass cellka-ci -dname "CN=Cellka CI"
           "$BT/zipalign" -p 4 "$APK" cellka-aligned.apk
-          "$BT/apksigner" sign --ks ci.jks --ks-pass pass:cellka-ci \
-            --out cellka-release.apk cellka-aligned.apk
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Signing with repository keystore"
+            echo "$KEYSTORE_BASE64" | base64 -d > cellka-key.p12
+            "$BT/apksigner" sign --ks-type PKCS12 --ks cellka-key.p12 \
+              --ks-key-alias cellka --ks-pass env:KEYSTORE_PASSWORD \
+              --out cellka-release.apk cellka-aligned.apk
+            rm -f cellka-key.p12
+          else
+            echo "::warning::KEYSTORE_BASE64 not set — CI throwaway key, no over-the-top updates"
+            keytool -genkeypair -v -keystore ci.jks -alias cellka \
+              -keyalg RSA -keysize 2048 -validity 36500 \
+              -storepass cellka-ci -keypass cellka-ci -dname "CN=Cellka CI"
+            "$BT/apksigner" sign --ks ci.jks --ks-pass pass:cellka-ci \
+              --out cellka-release.apk cellka-aligned.apk
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
