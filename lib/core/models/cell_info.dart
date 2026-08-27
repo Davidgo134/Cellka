@@ -1,6 +1,6 @@
 /// Модель соты из TelephonyManager (через CellInfoPlugin).
 class CellInfo {
-  /// LTE, NR, WCDMA, GSM, CDMA, TD-SCDMA.
+  /// LTE, NR, UMTS (WCDMA), GSM, CDMA, TDSCDMA.
   final String technology;
   final bool registered;
 
@@ -49,6 +49,9 @@ class CellInfo {
   /// Ширина канала, кГц.
   final int? bandwidth;
 
+  /// Уровень в dBm, как его отдал модем (плагин шлёт для всех технологий).
+  final int? dbm;
+
   final String? operator;
 
   /// Время снятия замера.
@@ -78,6 +81,7 @@ class CellInfo {
     this.ta,
     this.asu,
     this.bandwidth,
+    this.dbm,
     this.operator,
     this.timestamp,
   });
@@ -86,7 +90,7 @@ class CellInfo {
     int? toInt(Object? v) =>
         v is int ? v : int.tryParse(v?.toString() ?? '');
     return CellInfo(
-      technology: map['type']?.toString() ?? 'unknown',
+      technology: map['technology']?.toString() ?? 'unknown',
       registered: map['registered'] == true,
       mcc: toInt(map['mcc']),
       mnc: toInt(map['mnc']),
@@ -108,6 +112,7 @@ class CellInfo {
       ta: toInt(map['ta']),
       asu: toInt(map['asu']),
       bandwidth: toInt(map['bandwidth']),
+      dbm: toInt(map['dbm']) ?? toInt(map['rsrp']) ?? toInt(map['rssi']),
       operator: map['operator']?.toString(),
       timestamp: DateTime.now(),
     );
@@ -137,6 +142,7 @@ class CellInfo {
     int? ta,
     int? asu,
     int? bandwidth,
+    int? dbm,
     String? operator,
     DateTime? timestamp,
   }) {
@@ -164,6 +170,7 @@ class CellInfo {
       ta: ta ?? this.ta,
       asu: asu ?? this.asu,
       bandwidth: bandwidth ?? this.bandwidth,
+      dbm: dbm ?? this.dbm,
       operator: operator ?? this.operator,
       timestamp: timestamp ?? this.timestamp,
     );
@@ -171,9 +178,6 @@ class CellInfo {
 
   /// Канал независимо от технологии.
   int? get channel => earfcn ?? nrarfcn ?? uarfcn ?? arfcn;
-
-  /// Основной уровень сигнала для цветовой индикации.
-  int? get dbm => rsrp ?? rssi;
 
   /// eNodeB ID из LTE CI (старшие 20 бит), как у CellMapper.
   int? get eNbId =>

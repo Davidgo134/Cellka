@@ -75,7 +75,7 @@ class BandMapper {
   };
 
   /// Band по технологии и её каналу: LTE → earfcn, NR → nrarfcn,
-  /// WCDMA → uarfcn, GSM → arfcn (900/1800).
+  /// UMTS/WCDMA/TDSCDMA → uarfcn, GSM → arfcn (900/1800).
   static int? bandFor({
     String? technology,
     int? earfcn,
@@ -90,7 +90,9 @@ class BandMapper {
           if (nrarfcn >= r[1] && nrarfcn <= r[2]) return r[0].toInt();
         }
         return null;
+      case 'UMTS':
       case 'WCDMA':
+      case 'TDSCDMA':
         if (uarfcn == null) return null;
         for (final r in _wcdmaBands) {
           if (uarfcn >= r[1] && uarfcn <= r[2]) return r[0].toInt();
