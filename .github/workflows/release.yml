@@ -58,8 +58,9 @@ jobs:
           --build-number=${{ steps.ver.outputs.code }}
           --dart-define=OPENCELLID_API_KEY=${{ secrets.OPENCELLID_API_KEY }}
 
-      # Если в секретах лежит KEYSTORE_BASE64 — подписываем настоящим
-      # ключом (обновления ставятся поверх). Иначе — одноразовый CI-ключ.
+      # app build.gradle сам подписывает release debug-ключом, поэтому
+      # Flutter выдаёт app-release.apk (не unsigned). Переподписываем
+      # настоящим ключом из секретов (apksigner заменяет подпись).
       - name: Sign APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -67,8 +68,9 @@ jobs:
         run: |
           set -e
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          APK=build/app/outputs/flutter-apk/app-release-unsigned.apk
-          "$BT/zipalign" -p 4 "$APK" cellka-aligned.apk
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          cp "$APK" cellka-in.apk
+          "$BT/zipalign" -f -p 4 cellka-in.apk cellka-aligned.apk
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Signing with repository keystore"
             echo "$KEYSTORE_BASE64" | base64 -d > cellka-key.p12
@@ -77,12 +79,8 @@ jobs:
               --out cellka-release.apk cellka-aligned.apk
             rm -f cellka-key.p12
           else
-            echo "::warning::KEYSTORE_BASE64 not set — CI throwaway key, no over-the-top updates"
-            keytool -genkeypair -v -keystore ci.jks -alias cellka \
-              -keyalg RSA -keysize 2048 -validity 36500 \
-              -storepass cellka-ci -keypass cellka-ci -dname "CN=Cellka CI"
-            "$BT/apksigner" sign --ks ci.jks --ks-pass pass:cellka-ci \
-              --out cellka-release.apk cellka-aligned.apk
+            echo "::warning::KEYSTORE_BASE64 not set — debug-signed, no over-the-top updates"
+            cp cellka-aligned.apk cellka-release.apk
           fi
 
       - uses: actions/upload-artifact@v4
