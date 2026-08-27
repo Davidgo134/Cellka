@@ -1,102 +1,49 @@
 # Cellka
 
-**Cellka** — open-source мобильное приложение для мониторинга и картирования сотовых сетей, аналог NetMonster / Cell Mapper, но со спутниковыми картами **Yandex MapKit** (с возможностью fallback на Google Maps).
+Cellka — Android-приложение для анализа мобильной сети: карта вышек
+на спутниковых снимках, параметры текущей соты простым языком,
+запись треков сигнала.
 
-## Идея проекта
+## Что умеет
 
-Классические cell-mapping приложения (NetMonster, Cell Mapper, OpenSignal) показывают данные о базовых станциях (LAC/TAC, CID, PCI, RSRP/RSRQ/SINR, технологию радиосети) поверх обычных схематичных карт. Cellka делает то же самое, но:
+- **Карта** — спутник (Esri), гибрид или схема (OSM); ваша позиция
+  с кругом точности GPS
+- **Вышки операторов РФ** — слой из открытой базы OpenCelliD:
+  скачивается сам при первом запуске, обновляется раз в неделю,
+  фильтр по операторам, карточка вышки по тапу
+- **Текущая сота** — технология, band, частоты RX/TX, RSRP/RSRQ/SINR/TA,
+  eNodeB и сектор; каждый параметр — с объяснением «на пальцах»
+- **Линия до вышки** — к обслуживающей соте: из базы OpenCelliD, а если
+  её там нет — собственная оценка позиции по вашим замерам
+- **Запись треков** — GPS + параметры соты в фоне, история, просмотр
+  трека на спутнике, heatmap своих замеров на карте
+- **Экспорт** — GeoJSON и CSV; по желанию — отправка замеров
+  в OpenCelliD (так база пополняется)
 
-- показывает данные поверх **спутникового/гибридного слоя карты**, чтобы видеть реальный рельеф, застройку и вышки на местности;
-- в качестве картографического движка использует официальный **Yandex MapKit Mobile SDK** — легальный способ встраивания спутниковых снимков в приложение (в отличие от скрапинга тайлов, который запрещён правилами Яндекса);
-- строит heatmap покрытия сети на основе накопленных измерений;
-- хранит историю измерений локально (SQLite) и позволяет экспортировать/импортировать данные (CSV/GeoJSON).
+## Установка
 
-## Почему Yandex MapKit, а не Google Maps
+1. Откройте [Releases](https://github.com/Davidgo134/Cellka/releases)
+   → последний релиз → скачайте `cellka-release.apk`
+2. При установке разрешите «из неизвестных источников»
+3. В приложении дайте разрешения: геолокация, телефон, уведомления
 
-| Критерий | Yandex MapKit | Google Maps SDK |
-|---|---|---|
-| Качество спутниковых снимков в РФ/СНГ | Высокое, регулярно обновляется | Среднее в отдалённых регионах |
-| Бесплатный лимит запросов | Выше для проектов в РФ/СНГ | Требует billing-аккаунт |
-| Легальность встраивания в приложение | Да, через официальный SDK | Да, через официальный SDK |
-| Глобальное покрытие вне СНГ | Слабее | Сильнее |
-| Интеграция с Flutter | Пакет `yandex_mapkit` | Готовый плагин `google_maps_flutter` |
+Обновления ставятся поверх: все релизы подписаны одним ключом.
 
-Вывод: для аудитории в РФ/СНГ Yandex MapKit даёт лучшее качество снимков и более гибкие условия использования, поэтому выбран как основной провайдер карт. Слой карт вынесен в отдельный интерфейс (`MapProvider`), чтобы можно было подключить Google Maps или Mapbox как альтернативу для других регионов без переписывания всего приложения.
+## Сборка
 
-## Функциональность (roadmap)
+- Каждый push в `main`: analyze + тесты + debug APK (артефакт CI)
+- Релиз: Actions → **Release APK** → Run workflow → версия `vX.Y.Z` →
+  соберётся release-APK и появится GitHub Release
 
-Прогресс по MVP отслеживается в [docs/MVP_PLAN.md](docs/MVP_PLAN.md).
+Детали и статус задач — в [docs/MVP_PLAN.md](docs/MVP_PLAN.md).
 
-- [ ] Чтение данных о соте (LAC/TAC, CID, PCI, band, RSRP/RSRQ/RSSI/SINR) через `TelephonyManager`
-- [ ] Отображение текущей соты и соседних сот на спутниковой карте
-- [ ] Запись трека измерений с привязкой к GPS-координатам
-- [ ] Heatmap покрытия сети (по цвету — уровень сигнала)
-- [ ] Экспорт треков в GeoJSON/CSV
-- [ ] Тёмная тема, поддержка RU/EN
+## Данные и лицензии
 
-## Технологический стек
+- Вышки: © OpenCelliD contributors, CC BY-SA 4.0
+- Тайлы: Esri, Maxar, Earthstar Geographics / © OpenStreetMap contributors
 
-- **Flutter** (Dart) — кроссплатформенный UI
-- **Yandex MapKit Mobile SDK** (пакет `yandex_mapkit`) — спутниковые/гибридные карты
-- **Kotlin** (Android platform channel) — доступ к телефонии низкого уровня (`TelephonyManager`, `CellInfo`)
-- **sqflite** — локальное хранилище измерений
-- **geolocator** — GPS-трекинг
-- **provider** — управление состоянием
+## Технологии
 
-## Структура проекта
-
-```
-Cellka/
-├── .github/workflows/      # CI: analyze/test + сборка debug APK
-├── android/                # нативный Android-код, доступ к TelephonyManager
-├── lib/
-│   ├── core/
-│   │   ├── models/          # модели данных (CellInfo)
-│   │   ├── map/              # абстракция MapProvider (Yandex/Google)
-│   │   └── storage/          # работа с sqflite
-│   ├── features/
-│   │   ├── map_screen/       # экран карты с наложением сот
-│   │   ├── cell_details/     # детали соты
-│   │   └── history/          # история измерений, экспорт
-│   └── main.dart
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DESIGN.md
-│   └── MVP_PLAN.md
-├── test/
-├── pubspec.yaml
-└── README.md
-```
-
-## Начало работы
-
-```bash
-git clone https://github.com/Davidgo134/Cellka.git
-cd Cellka
-
-# Догенерировать недостающие файлы (gradle wrapper jar, иконки) —
-# существующие файлы не будут перезаписаны:
-flutter create --platforms=android --project-name cellka --org com.github.davidgo134 .
-
-# Прописать API-ключ Yandex MapKit (получить: https://developer.tech.yandex.ru/):
-echo "MAPKIT_API_KEY=ВАШ_КЛЮЧ" >> android/local.properties
-
-flutter pub get
-flutter run
-```
-
-## CI
-
-Workflow [.github/workflows/android.yml](.github/workflows/android.yml) на каждый push в `main`:
-1. `flutter analyze` + `flutter test`
-2. Сборка debug APK → артефакт `cellka-debug-apk`
-
-Для сборки с рабочей картой добавьте секрет `YANDEX_MAPKIT_API_KEY` в Settings → Secrets and variables → Actions. Без секрета APK соберётся, но карта не загрузится.
-
-## Лицензия
-
-MIT — см. [LICENSE](LICENSE).
-
-## Дисклеймер
-
-Проект использует спутниковые снимки исключительно через официальный SDK Yandex MapKit в соответствии с условиями использования Яндекса. Прямой скрапинг/кэширование тайлов вне SDK запрещён правилами сервиса.
+Flutter · flutter_map · geolocator · sqflite · Kotlin MethodChannel
+(TelephonyManager API) · GitHub Actions (CI, релизный конвейер,
+зеркало дампа OpenCelliD)
