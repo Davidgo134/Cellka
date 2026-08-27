@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -89,8 +88,9 @@ class _MapScreenState extends State<MapScreen> {
   DateTime? _towersLoadedAt;
   List<double>? _lastQueryBbox;
 
-  /// Автозагрузка/обновление базы вышек: прогресс 0..1 (null — не качаем).
-  double? _downloadProgress;
+  /// Автозагрузка/обновление базы вышек: статус-текст от сервиса.
+  bool _downloading = false;
+  String? _downloadStatus;
   String? _downloadError;
 
   /// Heatmap собственных замеров.
@@ -150,16 +150,17 @@ class _MapScreenState extends State<MapScreen> {
     final fresh = _towersLoadedAt != null &&
         DateTime.now().difference(_towersLoadedAt!) < _towersMaxAge;
     if (_towersCount > 0 && fresh) return;
-    if (_downloadProgress != null) return; // уже качаем
+    if (_downloading) return;
 
     setState(() {
-      _downloadProgress = -1; // indeterminate до первых байтов
+      _downloading = true;
+      _downloadStatus = null;
       _downloadError = null;
     });
     try {
       final count = await _downloader.downloadAndImport(
-        onProgress: (p) {
-          if (mounted) setState(() => _downloadProgress = p);
+        onProgress: (status) {
+          if (mounted) setState(() => _downloadStatus = status);
         },
       );
       final repo = TrackRepository();
@@ -176,7 +177,8 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _towersCount = count;
         _towersLoadedAt = DateTime.now();
-        _downloadProgress = null;
+        _downloading = false;
+        _downloadStatus = null;
         _lastQueryBbox = null;
       });
       _loadTowersInView();
@@ -187,7 +189,8 @@ class _MapScreenState extends State<MapScreen> {
       debugPrint('towers auto-download failed: $e');
       if (mounted) {
         setState(() {
-          _downloadProgress = null;
+          _downloading = false;
+          _downloadStatus = null;
           _downloadError = 'Не удалось скачать базу вышек';
         });
       }
@@ -299,7 +302,7 @@ class _MapScreenState extends State<MapScreen> {
       if (shown && mounted) setState(() => _towerMarkers = []);
       return;
     }
-    if (_towersCount == 0 && _downloadProgress == null) return;
+    if (_towersCount == 0 && !_downloading) return;
     final bbox = _paddedBounds();
     if (bbox == null) return;
     if (_covered(_lastQueryBbox, bbox) && shown) return;
@@ -847,7 +850,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
           // Баннер загрузки базы вышек.
-          if (_downloadProgress != null)
+          if (_downloading)
             Positioned(
               top: topPadding + 8,
               left: 12,
@@ -869,13 +872,18 @@ class _MapScreenState extends State<MapScreen> {
                           : 'Первый запуск: скачиваем базу вышек…',
                       style: const TextStyle(fontSize: 13),
                     ),
+                    if (_downloadStatus != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _downloadStatus!,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
-                    LinearProgressIndicator(
-                      value: _downloadProgress! >= 0 &&
-                              _downloadProgress! <= 1
-                          ? _downloadProgress
-                          : null,
-                    ),
+                    const LinearProgressIndicator(),
                   ],
                 ),
               ),
