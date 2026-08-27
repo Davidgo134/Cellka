@@ -4,6 +4,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Версия релиза (создаст тег и релиз с APK)'
+        required: true
+        default: 'v0.1.0'
 
 jobs:
   release:
@@ -59,9 +64,11 @@ jobs:
           name: cellka-release-apk
           path: cellka-release.apk
 
+      # Тег берём из input (ручной запуск) или из ref (push тега);
+      # action-gh-release создаст тег, если его нет.
       - name: GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: cellka-release.apk
           generate_release_notes: true
