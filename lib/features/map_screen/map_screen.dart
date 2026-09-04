@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -813,9 +814,34 @@ class _MapScreenState extends State<MapScreen> {
                 ],
               ),
               PolylineLayer(polylines: _linkLines),
+              // Кластеризация вышек: близкие маркеры схлопываются
+              // в счётчик, тап по кластеру приближает карту.
+              if (_towersEnabled)
+                MarkerClusterLayerWidget(
+                  options: MarkerClusterLayerOptions(
+                    maxClusterRadius: 45,
+                    size: const Size(36, 36),
+                    markers: _towerMarkers,
+                    builder: (context, markers) => Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.75),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white54, width: 1.5),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${markers.length}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               MarkerLayer(
                 markers: [
-                  ..._towerMarkers,
                   ..._linkMarkers,
                   if (_myPos != null)
                     Marker(
