@@ -296,9 +296,9 @@ class _MapScreenState extends State<MapScreen> {
     if (!_towersEnabled || !_mapReady) return;
     final zoom = _mapController.camera.zoom;
 
-    // Гистерезис зума: показываем от 12, скрываем ниже 11.
+    // Гистерезис зума: показываем от 11, скрываем ниже 10.
     final shown = _towerMarkers.isNotEmpty;
-    final threshold = shown ? 11.0 : 12.0;
+    final threshold = shown ? 10.0 : 11.0;
     if (zoom < threshold) {
       if (shown && mounted) setState(() => _towerMarkers = []);
       return;
@@ -308,6 +308,7 @@ class _MapScreenState extends State<MapScreen> {
     if (bbox == null) return;
     if (_covered(_lastQueryBbox, bbox) && shown) return;
 
+    final sw = Stopwatch()..start();
     try {
       final towers = await _towersRepo.inBbox(
         southLat: bbox[0],
@@ -318,43 +319,11 @@ class _MapScreenState extends State<MapScreen> {
       );
       if (!mounted) return;
 
-      // С зума 13 — значки-вышки, ниже — компактные точки.
-      final icons = zoom >= 13;
-      final size = icons ? 26.0 : zoom < 12.5 ? 14.0 : 10.0;
+      // Маркеры — всегда значки-вышки; ниже зума 13 их схлопывает
+      // кластерный слой (disableClusteringAtZoom). Ключ несёт mnc:cell.
       setState(() {
         _towerMarkers = [
-          for (final t in towers)
-            Marker(
-              point: LatLng(t.lat, t.lon),
-              width: size,
-              height: size,
-              child: GestureDetector(
-                onTap: () => _showTowerInfo(t),
-                child: icons
-                    ? Container(
-                        decoration: BoxDecoration(
-                          color: colorForMnc(t.mnc),
-                          shape: BoxShape.circle,
-                          border:
-                              Border.all(color: Colors.white, width: 1.5),
-                        ),
-                        padding: const EdgeInsets.all(3),
-                        child: const Icon(
-                          Icons.cell_tower,
-                          size: 15,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Container(
-                        decoration: BoxDecoration(
-                          color: colorForMnc(t.mnc).withValues(alpha: 0.9),
-                          shape: BoxShape.circle,
-                          border:
-                              Border.all(color: Colors.white, width: 1.5),
-                        ),
-                      ),
-              ),
-            ),
+          for (final t in towers) _towerMarker(t),
         ];
       });
       _lastQueryBbox = bbox;
@@ -362,10 +331,86 @@ class _MapScreenState extends State<MapScreen> {
         'layercount',
         'Вышек в области: ${towers.length} (база: $_towersCount)',
       );
+      debugPrint('tower layer: ${towers.length} вышек за '
+          '${sw.elapsedMilliseconds} мс (z$zoom)');
     } catch (e, st) {
       debugPrint('tower layer load failed: $e\n$st');
       _warnOnce('layererror', 'Слой вышек: ошибка загрузки — $e');
     }
+  }
+
+  /// Значок-вышка: цветной круг оператора + иконка, тап → карточка.
+  /// Ключ «mnc:cell» — по нему кластер считает доминирующего оператора.
+  Marker _towerMarker(Tower t) {
+    return Marker(
+      key: ValueKey('${t.mnc}:${t.cell}'),
+      point: LatLng(t.lat, t.lon),
+      width: 26,
+      height: 26,
+      child: GestureDetector(
+        onTap: () => _showTowerInfo(t),
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorForMnc(t.mnc),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 1.5),
+          ),
+          padding: const EdgeInsets.all(3),
+          child: const Icon(Icons.cell_tower, size: 15, color: Colors.white),
+        ),
+      ),
+    );
+  }
+
+  /// Степень зума для адаптивного радиуса кластеров.
+  int _clusterTier(double z) => z <= 11 ? 0 : z < 13 ? 1 : 2;
+
+  /// Адаптивный радиус кластеризации по зуму (px).
+  int get _clusterRadius {
+    if (!_mapReady) return 70;
+    return switch (_clusterTier(_mapController.camera.zoom)) {
+      0 => 70,
+      1 => 45,
+      _ => 30,
+    };
+  }
+
+  /// Пузырь кластера: цвет доминирующего оператора + счётчик.
+  Widget _clusterBuilder(BuildContext context, List<Marker> markers) {
+    final counts = <int, int>{};
+    for (final m in markers) {
+      final k = m.key;
+      if (k is ValueKey<String>) {
+        final mnc = int.tryParse(k.value.split(':').first);
+        if (mnc != null) counts[mnc] = (counts[mnc] ?? 0) + 1;
+      }
+    }
+    int? dominant;
+    var best = 0;
+    counts.forEach((mnc, n) {
+      if (n > best) {
+        best = n;
+        dominant = mnc;
+      }
+    });
+    final color = dominant != null ? colorForMnc(dominant!) : Colors.grey;
+    return Container(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.85),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2),
+      ),
+      child: Center(
+        child: Text(
+          '${markers.length}',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
   }
 
   /// Heatmap собственных замеров в видимой области.
@@ -415,10 +460,18 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  double? _lastClusterZoomTier;
+
   void _onMapPosition(MapCamera camera, bool hasGesture) {
     // Дебаунс: грузим слои после остановки камеры.
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () {
+      // Смена зум-степени → перестройка радиуса кластеров.
+      final tier = _clusterTier(camera.zoom);
+      if (tier != _lastClusterZoomTier) {
+        _lastClusterZoomTier = tier;
+        setState(() {});
+      }
       _loadTowersInView();
       _loadMeasurementsInView();
     });
@@ -819,25 +872,14 @@ class _MapScreenState extends State<MapScreen> {
               if (_towersEnabled)
                 MarkerClusterLayerWidget(
                   options: MarkerClusterLayerOptions(
-                    maxClusterRadius: 45,
-                    size: const Size(36, 36),
+                    maxClusterRadius: _clusterRadius,
+                    size: const Size(40, 40),
+                    disableClusteringAtZoom: 13,
+                    zoomToBoundsOnClick: true,
+                    centerMarkerOnClick: true,
+                    spiderfyCircleRadius: 40,
                     markers: _towerMarkers,
-                    builder: (context, markers) => Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.75),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white54, width: 1.5),
-                      ),
-                      child: Center(
-                        child: Text(
-                          '${markers.length}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
+                    builder: _clusterBuilder,
                   ),
                 ),
               MarkerLayer(
