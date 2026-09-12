@@ -48,6 +48,11 @@ class _MapScreenState extends State<MapScreen> {
   /// База вышек старше этого возраста обновляется автоматически.
   static const _towersMaxAge = Duration(days: 7);
 
+final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
+  maxCacheSize: 500 * 1000 * 1000, // 500 МБ
+  overrideFreshAge: const Duration(days: 30),
+);
+
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
   final _towers = TowerService();
@@ -872,17 +877,26 @@ class _MapScreenState extends State<MapScreen> {
                 TileLayer(
                   urlTemplate: _osmScheme,
                   userAgentPackageName: 'com.github.davidgo134.cellka',
+                  tileProvider: NetworkTileProvider(
+                    cachingProvider: _tileCaching,
+                  ),
                 )
               else ...[
                 TileLayer(
                   urlTemplate: _esriImagery,
                   userAgentPackageName: 'com.github.davidgo134.cellka',
+                  tileProvider: NetworkTileProvider(
+                    cachingProvider: _tileCaching,
+                  ),
                   maxZoom: 19,
                 ),
                 if (_mode == CellkaMapMode.hybrid)
                   TileLayer(
                     urlTemplate: _esriLabels,
                     userAgentPackageName: 'com.github.davidgo134.cellka',
+                  tileProvider: NetworkTileProvider(
+                    cachingProvider: _tileCaching,
+                  ),
                     maxZoom: 19,
                   ),
               ],
