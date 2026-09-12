@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'cellka.db';
-  static const _dbVersion = 6;
+  static const _dbVersion = 7;
 
   Database? _db;
 
@@ -116,6 +116,25 @@ class AppDatabase {
           // v6: слот SIM при dual-SIM.
           await db.execute(
             'ALTER TABLE measurements ADD COLUMN sim_slot INTEGER',
+          );
+        }
+        if (oldVersion < 7) {
+          await db.execute("" +
+            'CREATE TABLE speed_tests(' +
+            '  id INTEGER PRIMARY KEY AUTOINCREMENT,' +
+            '  track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,' +
+            '  ts TEXT NOT NULL,' +
+            '  lat REAL,' +
+            '  lon REAL,' +
+            '  accuracy REAL,' +
+            '  down_mbps REAL,' +
+            '  up_mbps REAL,' +
+            '  ping_ms REAL,' +
+            '  server TEXT' +
+            ')'
+          );
+          await db.execute(
+            'CREATE INDEX idx_speed_tests_track ON speed_tests(track_id)',
           );
         }
       },

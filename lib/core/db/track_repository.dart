@@ -161,6 +161,40 @@ class TrackRepository {
     };
   }
 
+  /// Сохранить результат спидтеста (привязка к треку).
+  Future<void> insertSpeedTest({
+    required String trackId,
+    required double downMbps,
+    double? pingMs,
+    required String server,
+    double? lat,
+    double? lon,
+    double? accuracy,
+  }) async {
+    final db = await _db;
+    await db.insert('speed_tests', {
+      'track_id': trackId,
+      'ts': DateTime.now().toIso8601String(),
+      'lat': lat,
+      'lon': lon,
+      'accuracy': accuracy,
+      'down_mbps': downMbps,
+      'ping_ms': pingMs,
+      'server': server,
+    });
+  }
+
+  /// Результаты спидтестов трека (для экспорта и просмотра).
+  Future<List<Map<String, Object?>>> speedTestsForTrack(String trackId) async {
+    final db = await _db;
+    return db.query(
+      'speed_tests',
+      where: 'track_id = ?',
+      whereArgs: [trackId],
+      orderBy: 'ts',
+    );
+  }
+
   Future<List<Map<String, Object?>>> measurementsInBbox({
     required double southLat,
     required double northLat,

@@ -27,7 +27,6 @@ class _TrackViewScreenState extends State<TrackViewScreen> {
 
 final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
   maxCacheSize: 500 * 1000 * 1000, // 500 МБ
-  overrideFreshAge: const Duration(days: 30),
 );
 
   final _repo = TrackRepository();

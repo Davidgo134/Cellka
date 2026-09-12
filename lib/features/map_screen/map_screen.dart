@@ -50,7 +50,6 @@ class _MapScreenState extends State<MapScreen> {
 
 final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
   maxCacheSize: 500 * 1000 * 1000, // 500 МБ
-  overrideFreshAge: const Duration(days: 30),
 );
 
   final _telephony = TelephonyService();
