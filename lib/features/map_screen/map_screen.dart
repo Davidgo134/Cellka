@@ -460,7 +460,7 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  double? _lastClusterZoomTier;
+  int? _lastClusterZoomTier;
 
   void _onMapPosition(MapCamera camera, bool hasGesture) {
     // Дебаунс: грузим слои после остановки камеры.
