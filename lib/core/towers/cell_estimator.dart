@@ -12,11 +12,14 @@ class CellEstimate {
   final int samples;
   final double weight;
 
+  final double accuracyM;
+
   const CellEstimate({
     required this.lat,
     required this.lon,
     required this.samples,
     required this.weight,
+    required this.accuracyM,
   });
 }
 
@@ -74,10 +77,18 @@ class CellEstimator {
         final r = rows.first;
         final oldW = (r['weight'] as num).toDouble();
         final newW = oldW + w;
-        final lat =
-            (((r['lat'] as num).toDouble() * oldW) + pos.latitude * w) / newW;
-        final lon =
-            (((r['lon'] as num).toDouble() * oldW) + pos.longitude * w) / newW;
+        final oldLat = (r['lat'] as num).toDouble();
+        final oldLon = (r['lon'] as num).toDouble();
+        final lat = ((oldLat * oldW) + pos.latitude * w) / newW;
+        final lon = ((oldLon * oldW) + pos.longitude * w) / newW;
+        // Онлайн-варианса (West): M2 += w · d(точка,старыйμ) · d(точка,новыйμ)
+        final dOld = Geolocator.distanceBetween(
+          oldLat, oldLon, pos.latitude, pos.longitude,
+        );
+        final dNew = Geolocator.distanceBetween(
+          lat, lon, pos.latitude, pos.longitude,
+        );
+        final m2 = (r['m2'] as num? ?? 0).toDouble() + w * dOld * dNew;
         await txn.update(
           'cell_estimates',
           {
@@ -85,6 +96,7 @@ class CellEstimator {
             'lon': lon,
             'weight': newW,
             'samples': (r['samples'] as num).toInt() + 1,
+            'm2': m2,
             'updated_at': DateTime.now().toIso8601String(),
           },
           where: 'cell_key = ?',
@@ -108,11 +120,16 @@ class CellEstimator {
     final r = rows.first;
     final samples = (r['samples'] as num).toInt();
     if (samples < minSamplesToShow) return null;
+    final weight = (r['weight'] as num).toDouble();
+    final m2 = (r['m2'] as num? ?? 0).toDouble();
+    // СКО в метрах; пол — 25 м, чтобы не внушать ложную уверенность.
+    final acc = weight > 0 ? sqrt(m2 / weight) : 0.0;
     return CellEstimate(
       lat: (r['lat'] as num).toDouble(),
       lon: (r['lon'] as num).toDouble(),
       samples: samples,
-      weight: (r['weight'] as num).toDouble(),
+      weight: weight,
+      accuracyM: acc < 25 ? 25 : acc,
     );
   }
 }

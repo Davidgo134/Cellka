@@ -70,9 +70,10 @@ class _MapScreenState extends State<MapScreen> {
   double _posAccuracy = 0;
   bool _hasFix = false;
 
-  /// Линия к обслуживающей вышке + её маркер.
+  /// Линия к обслуживающей вышке + её маркер + круг точности оценки.
   List<Marker> _linkMarkers = [];
   List<Polyline> _linkLines = [];
+  List<CircleMarker> _linkCircles = [];
   String? _lastTowerKey;
   String? _lastErrorKey;
   DateTime _lastErrorAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -598,6 +599,7 @@ class _MapScreenState extends State<MapScreen> {
         setState(() {
           _linkMarkers = [];
           _linkLines = [];
+          _linkCircles = [];
           _towerStatusNote = null;
         });
       }
@@ -662,10 +664,11 @@ class _MapScreenState extends State<MapScreen> {
             serving,
             TowerLocation(lat: est.lat, lon: est.lon),
             estimated: true,
+            accuracyM: est.accuracyM,
           );
           setState(() {
-            _towerStatusNote =
-                'Оценка позиции вышки (${est.samples} замеров)';
+            _towerStatusNote = 'Оценка позиции вышки '
+                '(${est.samples} замеров, ±${est.accuracyM.round()} м)';
           });
         } else {
           _warnOnce(
@@ -691,6 +694,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _linkMarkers = [];
       _linkLines = [];
+      _linkCircles = [];
     });
   }
 
@@ -705,6 +709,7 @@ class _MapScreenState extends State<MapScreen> {
     CellInfo serving,
     TowerLocation loc, {
     bool estimated = false,
+    double? accuracyM,
   }) async {
     final userPoint = await _userPoint();
     if (!mounted) return;
@@ -716,6 +721,18 @@ class _MapScreenState extends State<MapScreen> {
     final towerPoint = LatLng(loc.lat, loc.lon);
     final color = estimated ? Colors.white70 : signalColor(serving.rsrp);
     setState(() {
+      // Круг погрешности оценки — честные данные вместо точки.
+      _linkCircles = [
+        if (estimated && accuracyM != null)
+          CircleMarker(
+            point: towerPoint,
+            radius: accuracyM,
+            useRadiusInMeter: true,
+            color: Colors.white.withValues(alpha: 0.10),
+            borderColor: Colors.white38,
+            borderStrokeWidth: 1,
+          ),
+      ];
       _linkMarkers = [
         Marker(
           point: towerPoint,
@@ -856,6 +873,7 @@ class _MapScreenState extends State<MapScreen> {
               // Heatmap своих замеров и круг точности позиции.
               CircleLayer(
                 circles: [
+                  ..._linkCircles,
                   ..._measurementCircles,
                   if (_myPos != null && _posAccuracy > 0)
                     CircleMarker(

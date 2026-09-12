@@ -137,6 +137,30 @@ class TrackRepository {
   }
 
   /// Свои замеры в области карты — для heatmap-слоя.
+  /// Какие band мы сами видели на этой соте (band → число замеров).
+  /// area = TAC/LAC вышки, cell = Cell ID. Строка radio совпадает с
+  /// technology в measurements, но для надёжности не фильтруем по ней.
+  Future<Map<int, int>> bandsForCell({
+    required String radio,
+    required int mcc,
+    required int mnc,
+    required int area,
+    required int cell,
+  }) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.rawQuery(
+      'SELECT band, COUNT(*) AS c FROM measurements '
+      'WHERE band IS NOT NULL AND mcc = ? AND mnc = ? '
+      'AND (tac = ? OR lac = ?) AND (ci = ? OR nci = ?) '
+      'GROUP BY band ORDER BY c DESC',
+      [mcc, mnc, area, area, cell, cell],
+    );
+    return {
+      for (final r in rows)
+        (r['band'] as num).toInt(): (r['c'] as num).toInt(),
+    };
+  }
+
   Future<List<Map<String, Object?>>> measurementsInBbox({
     required double southLat,
     required double northLat,

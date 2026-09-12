@@ -88,7 +88,7 @@ class CellDetailsScreen extends StatelessWidget {
   /// Карточка-резюме: насколько всё хорошо и к чему мы подключены.
   Widget _summaryCard(BuildContext context, CellInfo c) {
     final color = signalColor(c.rsrp);
-    final band = BandMapper.bandForEarfcn(c.earfcn);
+    final band = c.band ?? BandMapper.bandForEarfcn(c.earfcn);
 
     final lines = <String>[
       _signalVerdict(c.rsrp),
@@ -150,8 +150,11 @@ class CellDetailsScreen extends StatelessWidget {
     ];
   }
 
+  bool get _hasNrNeighbor =>
+      allCells.any((e) => e.technology == 'NR');
+
   List<Widget> _radioRows(BuildContext context, CellInfo c) {
-    final band = BandMapper.bandForEarfcn(c.earfcn);
+    final band = c.band ?? BandMapper.bandForEarfcn(c.earfcn);
     final rx = BandMapper.rxFreqMhz(c.earfcn);
     final tx = BandMapper.txFreqMhz(c.earfcn);
     final duplex = BandMapper.duplexForBand(band);
@@ -160,7 +163,20 @@ class CellDetailsScreen extends StatelessWidget {
       _section('Радио'),
       _row(context, 'Диапазон', BandMapper.bandDisplay(band),
           explain: 'band'),
-      _row(context, 'EARFCN', '${c.earfcn ?? '—'}', explain: 'earfcn'),
+      _row(
+        context,
+        c.technology == 'NR' ? 'NRARFCN' : 'EARFCN',
+        '${c.channel ?? '—'}',
+        explain: 'earfcn',
+      ),
+      if (c.technology == 'NR')
+        _row(context, 'Режим 5G', 'SA (автономный 5G)')
+      else if (_hasNrNeighbor)
+        _row(
+          context,
+          'Режим 5G',
+          'NSA — LTE-якорь + NR рядом (EN-DC)',
+        ),
       if (duplex != null)
         _row(context, 'Дуплекс', duplex, explain: 'duplex'),
       if (rx != null)

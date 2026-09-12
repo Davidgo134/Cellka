@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/db/track_repository.dart';
 import '../../core/towers/towers_repository.dart';
 
 /// Карточка вышки по тапу — аналог Tower Info у CellMapper,
@@ -70,10 +71,33 @@ class TowerInfoSheet extends StatelessWidget {
               '${tower.lat.toStringAsFixed(5)}, ${tower.lon.toStringAsFixed(5)}',
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Band и частоты появятся из собственных замеров — '
-              'в дампе OpenCelliD их нет.',
-              style: TextStyle(fontSize: 12, color: Colors.white54),
+            // Band/частоты из собственных замеров (в дампе их нет).
+            FutureBuilder<Map<int, int>>(
+              future: TrackRepository().bandsForCell(
+                radio: tower.radio,
+                mcc: 250, // дамп и слой — только MCC 250
+                mnc: tower.mnc,
+                area: tower.area,
+                cell: tower.cell,
+              ),
+              builder: (context, snap) {
+                final bands = snap.data;
+                if (bands == null || bands.isEmpty) {
+                  return const Text(
+                    'Band и частоты появятся из собственных замеров — '
+                    'в дампе OpenCelliD их нет.',
+                    style: TextStyle(fontSize: 12, color: Colors.white54),
+                  );
+                }
+                final text = bands.entries
+                    .map((e) => 'B${e.key} ×${e.value}')
+                    .join(' · ');
+                return Text(
+                  'Замечено в наших треках: $text',
+                  style:
+                      const TextStyle(fontSize: 12, color: Colors.white70),
+                );
+              },
             ),
             const SizedBox(height: 14),
             SizedBox(

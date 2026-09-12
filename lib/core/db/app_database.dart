@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'cellka.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   Database? _db;
 
@@ -105,6 +105,12 @@ class AppDatabase {
         if (oldVersion < 4) {
           await _createV4Tables(db);
         }
+        if (oldVersion < 5) {
+          // v5: накопленная взвешенная варианса — погрешность оценки вышки.
+          await db.execute(
+            'ALTER TABLE cell_estimates ADD COLUMN m2 REAL NOT NULL DEFAULT 0',
+          );
+        }
       },
     );
   }
@@ -130,6 +136,7 @@ class AppDatabase {
         lon REAL NOT NULL,
         weight REAL NOT NULL DEFAULT 0,
         samples INTEGER NOT NULL DEFAULT 0,
+        m2 REAL NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       )
     ''');
