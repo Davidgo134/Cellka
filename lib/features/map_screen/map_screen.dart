@@ -102,6 +102,10 @@ class _MapScreenState extends State<MapScreen> {
 
   bool _autoMovedToUser = false;
 
+  /// Dual-SIM: подписки и активный слот (0 = SIM 1).
+  List<Map<String, dynamic>> _sims = [];
+  int _activeSlot = 0;
+
   bool get _isRecording => _recorder.isRecording;
 
   @override
@@ -550,15 +554,19 @@ class _MapScreenState extends State<MapScreen> {
     if (granted) {
       _startPositionStream();
       await _moveToUser();
+      await _loadSims();
     }
 
     _cellsSub = _telephony.watchCells().listen((cells) {
       CellInfo? serving;
       for (final c in cells) {
-        if (c.registered) {
-          serving = c;
-          break;
+        if (!c.registered) continue;
+        // Dual-SIM: обслуживающая сота выбранного слота.
+        if (c.slot != null && _sims.length > 1 && c.slot != _activeSlot) {
+          continue;
         }
+        serving = c;
+        break;
       }
       if (mounted) {
         setState(() {
@@ -568,6 +576,14 @@ class _MapScreenState extends State<MapScreen> {
         _updateTowerLink(serving);
       }
     });
+  }
+
+  /// Dual-SIM: список подписок (чипы на карте, если их две).
+  Future<void> _loadSims() async {
+    try {
+      final sims = await _telephony.getSubscriptions();
+      if (mounted && sims.length > 1) setState(() => _sims = sims);
+    } catch (_) {}
   }
 
   /// Постоянный стрим позиции для маркера «я» (пока экран открыт).
@@ -935,6 +951,32 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
+          // Чипы SIM при dual-SIM (правый верхний угол).
+          if (_sims.length > 1)
+            Positioned(
+              right: 12,
+              top: topPadding + 8,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final s in _sims)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: ChoiceChip(
+                        label: Text(
+                          'SIM ${(s['slot'] as int) + 1}'
+                          '${s['carrierName'] != null ? ' · ${s['carrierName']}' : ''}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        selected: _activeSlot == s['slot'],
+                        onSelected: (_) =>
+                            setState(() => _activeSlot = s['slot'] as int),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           // Баннер загрузки базы вышек.
           if (_downloading)
             Positioned(

@@ -81,7 +81,8 @@ class SignalStrip extends StatelessWidget {
                       Text(
                         '${c.technology}'
                         '${c.band != null ? ' ${BandMapper.bandLabel(c.band)}' : ''}'
-                        '${c.operator != null ? ' · ${c.operator}' : ''}',
+                        '${c.operator != null ? ' · ${c.operator}' : ''}'
+                        '${c.slot != null ? ' · SIM ${c.slot! + 1}' : ''}',
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,

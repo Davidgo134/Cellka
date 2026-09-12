@@ -1,7 +1,9 @@
 package com.github.davidgo134.cellka
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.os.Build
+import android.telephony.SubscriptionManager
 import android.telephony.CellIdentityGsm
 import android.telephony.CellIdentityLte
 import android.telephony.CellIdentityNr
@@ -48,6 +50,15 @@ class CellInfoPlugin private constructor(private val context: Context) :
         when (call.method) {
             "getAllCellInfo" -> getAllCellInfo(result)
             "getOperatorInfo" -> getOperatorInfo(result)
+            "getSubscriptions" -> getSubscriptions(result)
+            "getAllCellInfoForSub" -> {
+                val subId = call.argument<Int>("subId")
+                if (subId == null) {
+                    result.error("BAD_ARGS", "subId required", null)
+                } else {
+                    getAllCellInfoForSub(subId, result)
+                }
+            }
             else -> result.notImplemented()
         }
     }
@@ -62,6 +73,44 @@ class CellInfoPlugin private constructor(private val context: Context) :
                 "Нет разрешений ACCESS_FINE_LOCATION / READ_PHONE_STATE",
                 e.message,
             )
+        } catch (e: Exception) {
+            result.error("CELL_INFO_ERROR", e.message, null)
+        }
+    }
+
+    /// Активные SIM-подписки (dual-SIM): слот, subId, оператор.
+    @SuppressLint("MissingPermission") // READ_PHONE_STATE запрошен в рантайме
+    private fun getSubscriptions(result: MethodChannel.Result) {
+        try {
+            val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE)
+                as SubscriptionManager
+            val list = sm.activeSubscriptionInfoList.orEmpty().map { info ->
+                mapOf(
+                    "subId" to info.subscriptionId,
+                    "slot" to info.simSlotIndex,
+                    "carrierName" to info.carrierName?.toString(),
+                    "mcc" to if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                        info.mccString?.toIntOrNull() else null,
+                    "mnc" to if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                        info.mncString?.toIntOrNull() else null,
+                )
+            }
+            result.success(list)
+        } catch (e: SecurityException) {
+            result.error("PERMISSION_DENIED", "READ_PHONE_STATE нужен", e.message)
+        } catch (e: Exception) {
+            result.error("SUBSCRIPTION_ERROR", e.message, null)
+        }
+    }
+
+    /// Соты конкретной SIM: TelephonyManager.createForSubscriptionId.
+    private fun getAllCellInfoForSub(subId: Int, result: MethodChannel.Result) {
+        try {
+            val tm = (context.getSystemService(Context.TELEPHONY_SERVICE)
+                as TelephonyManager).createForSubscriptionId(subId)
+            result.success(tm.allCellInfo.orEmpty().map { cellToMap(it) })
+        } catch (e: SecurityException) {
+            result.error("PERMISSION_DENIED", "Нет разрешений", e.message)
         } catch (e: Exception) {
             result.error("CELL_INFO_ERROR", e.message, null)
         }

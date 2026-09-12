@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'cellka.db';
-  static const _dbVersion = 5;
+  static const _dbVersion = 6;
 
   Database? _db;
 
@@ -68,7 +68,8 @@ class AppDatabase {
             sinr INTEGER,
             dbm INTEGER,
             asu INTEGER,
-            ta INTEGER
+            ta INTEGER,
+            sim_slot INTEGER
           )
         ''');
         await db.execute(
@@ -109,6 +110,12 @@ class AppDatabase {
           // v5: накопленная взвешенная варианса — погрешность оценки вышки.
           await db.execute(
             'ALTER TABLE cell_estimates ADD COLUMN m2 REAL NOT NULL DEFAULT 0',
+          );
+        }
+        if (oldVersion < 6) {
+          // v6: слот SIM при dual-SIM.
+          await db.execute(
+            'ALTER TABLE measurements ADD COLUMN sim_slot INTEGER',
           );
         }
       },

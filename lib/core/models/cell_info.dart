@@ -54,6 +54,9 @@ class CellInfo {
 
   final String? operator;
 
+  /// Слот SIM (0/1) при dual-SIM; null — односимочное/системное чтение.
+  final int? slot;
+
   /// Время снятия замера.
   final DateTime? timestamp;
 
@@ -83,6 +86,7 @@ class CellInfo {
     this.bandwidth,
     this.dbm,
     this.operator,
+    this.slot,
     this.timestamp,
   });
 
@@ -114,6 +118,7 @@ class CellInfo {
       bandwidth: toInt(map['bandwidth']),
       dbm: toInt(map['dbm']) ?? toInt(map['rsrp']) ?? toInt(map['rssi']),
       operator: map['operator']?.toString(),
+      slot: toInt(map['slot']),
       timestamp: DateTime.now(),
     );
   }
@@ -144,6 +149,7 @@ class CellInfo {
     int? bandwidth,
     int? dbm,
     String? operator,
+    int? slot,
     DateTime? timestamp,
   }) {
     return CellInfo(
@@ -172,6 +178,7 @@ class CellInfo {
       bandwidth: bandwidth ?? this.bandwidth,
       dbm: dbm ?? this.dbm,
       operator: operator ?? this.operator,
+      slot: slot ?? this.slot,
       timestamp: timestamp ?? this.timestamp,
     );
   }

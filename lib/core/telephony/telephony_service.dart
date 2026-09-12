@@ -54,6 +54,36 @@ class TelephonyService {
         .toList();
   }
 
+  /// Активные SIM-подписки: [{subId, slot, carrierName, mcc, mnc}].
+  Future<List<Map<String, dynamic>>> getSubscriptions() async {
+    final raw = await _channel.invokeMethod<List<dynamic>>('getSubscriptions');
+    if (raw == null) return const [];
+    return [for (final e in raw) Map<String, dynamic>.from(e as Map)];
+  }
+
+  /// Соты конкретной SIM (subId). Пусто — если её нет/нет прав.
+  Future<List<CellInfo>> getCellInfoForSub(int subId) async {
+    final raw = await _channel.invokeMethod<List<dynamic>>(
+      'getAllCellInfoForSub',
+      {'subId': subId},
+    );
+    if (raw == null) return const [];
+    return raw
+        .map((e) => CellInfo.fromMap(Map<String, dynamic>.from(e as Map)))
+        .map(
+          (c) => c.copyWith(
+            band: BandMapper.bandFor(
+              technology: c.technology,
+              earfcn: c.earfcn,
+              nrarfcn: c.nrarfcn,
+              uarfcn: c.uarfcn,
+              arfcn: c.arfcn,
+            ),
+          ),
+        )
+        .toList();
+  }
+
   Future<OperatorInfo> getOperatorInfo() async {
     final raw =
         await _channel.invokeMethod<Map<dynamic, dynamic>>('getOperatorInfo');
@@ -66,10 +96,30 @@ class TelephonyService {
   Stream<List<CellInfo>> watchCells({
     Duration interval = const Duration(seconds: 1),
   }) async* {
+    // Dual-SIM: читаем соты по каждой подписке и тегируем слотом.
+    List<Map<String, dynamic>> subs = const [];
+    try {
+      subs = await getSubscriptions();
+    } on PlatformException {
+      // без прав — пустой список, работаем как односимочные
+    }
+    final dual = subs.length > 1;
     while (true) {
       var cells = const <CellInfo>[];
       try {
-        cells = await getAllCellInfo();
+        if (dual) {
+          final merged = <CellInfo>[];
+          for (final s in subs) {
+            final slot = (s['slot'] as num?)?.toInt();
+            final subId = (s['subId'] as num?)?.toInt();
+            if (slot == null || subId == null) continue;
+            final list = await getCellInfoForSub(subId);
+            merged.addAll(list.map((c) => c.copyWith(slot: slot)));
+          }
+          cells = merged;
+        } else {
+          cells = await getAllCellInfo();
+        }
       } on PlatformException {
         // ожидаемо при отсутствии разрешений — проглатываем
       }

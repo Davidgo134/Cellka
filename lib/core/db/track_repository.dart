@@ -244,4 +244,5 @@ Map<String, Object?> measurementRow(
       'dbm': c.dbm,
       'asu': c.asu,
       'ta': c.ta,
+      'sim_slot': c.slot,
     };
