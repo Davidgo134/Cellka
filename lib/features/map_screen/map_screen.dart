@@ -352,7 +352,7 @@ class _MapScreenState extends State<MapScreen> {
   /// Ключ «mnc:cell» — по нему кластер считает доминирующего оператора.
   Marker _towerMarker(Tower t) {
     return Marker(
-      key: ValueKey('${t.mnc}:${t.cell}'),
+      key: ValueKey('${t.mnc}:${t.area}:${t.cell}:${t.radio}'),
       point: LatLng(t.lat, t.lon),
       width: 26,
       height: 26,
