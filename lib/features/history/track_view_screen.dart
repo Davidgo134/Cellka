@@ -25,10 +25,6 @@ class _TrackViewScreenState extends State<TrackViewScreen> {
       'https://server.arcgisonline.com/ArcGIS/rest/services/'
       'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
 
-final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
-  maxCacheSize: 500 * 1000 * 1000, // 500 МБ
-);
-
   final _repo = TrackRepository();
   final _mapController = MapController();
   List<Map<String, Object?>> _points = [];
@@ -105,17 +101,11 @@ final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
                     TileLayer(
                       urlTemplate: _esriImagery,
                       userAgentPackageName: 'com.github.davidgo134.cellka',
-                  tileProvider: NetworkTileProvider(
-                    cachingProvider: _tileCaching,
-                  ),
                       maxZoom: 19,
                     ),
                     TileLayer(
                       urlTemplate: _esriLabels,
                       userAgentPackageName: 'com.github.davidgo134.cellka',
-                  tileProvider: NetworkTileProvider(
-                    cachingProvider: _tileCaching,
-                  ),
                       maxZoom: 19,
                     ),
                     if (_latLngs.length >= 2)

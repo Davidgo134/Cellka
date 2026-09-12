@@ -13,6 +13,7 @@ class ExportService {
   /// замер с параметрами сети. Координаты по стандарту — [lon, lat].
   Future<File> exportGeoJson(TrackSummary track) async {
     final points = await _repo.trackPoints(track.id);
+    final speedTests = await _repo.speedTestsForTrack(track.id);
     final lineCoords = <List<double>>[];
     final features = <Map<String, Object?>>[];
 
@@ -28,6 +29,27 @@ class ExportService {
           'coordinates': [lon, lat],
         },
         'properties': _pointProps(p),
+      });
+    }
+
+    // Результаты спидтестов — отдельные точки с типом speedtest.
+    for (final s in speedTests) {
+      final lat = (s['lat'] as num?)?.toDouble();
+      final lon = (s['lon'] as num?)?.toDouble();
+      if (lat == null || lon == null) continue;
+      features.add({
+        'type': 'Feature',
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [lon, lat],
+        },
+        'properties': {
+          'type': 'speedtest',
+          'ts': s['ts'],
+          'down_mbps': s['down_mbps'],
+          'ping_ms': s['ping_ms'],
+          'server': s['server'],
+        },
       });
     }
 
@@ -60,7 +82,7 @@ class ExportService {
       'ts', 'lat', 'lon', 'accuracy', 'speed', 'bearing',
       'technology', 'mcc', 'mnc', 'tac', 'lac', 'ci', 'nci', 'pci',
       'earfcn', 'nrarfcn', 'band', 'bandwidth',
-      'rsrp', 'rsrq', 'rssi', 'sinr', 'dbm', 'ta',
+      'rsrp', 'rsrq', 'rssi', 'sinr', 'dbm', 'ta', 'sim_slot',
     ];
     final buf = StringBuffer(cols.join(','));
     for (final p in points) {
@@ -87,6 +109,7 @@ class ExportService {
         'sinr_db': p['sinr'],
         'dbm': p['dbm'],
         'speed_ms': p['speed'],
+        'sim_slot': p['sim_slot'],
       };
 
   String _csvVal(Object? v) {

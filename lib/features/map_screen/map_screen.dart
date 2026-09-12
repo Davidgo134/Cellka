@@ -11,6 +11,7 @@ import '../../core/db/track_repository.dart';
 import '../../core/models/cell_info.dart';
 import '../../core/permissions/permission_service.dart';
 import '../../core/recording/recording_service.dart';
+import '../../core/speedtest/speed_test_service.dart';
 import '../../core/telephony/telephony_service.dart';
 import '../../core/towers/cell_estimator.dart';
 import '../../core/towers/tower_download_service.dart';
@@ -47,10 +48,6 @@ class _MapScreenState extends State<MapScreen> {
 
   /// База вышек старше этого возраста обновляется автоматически.
   static const _towersMaxAge = Duration(days: 7);
-
-final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
-  maxCacheSize: 500 * 1000 * 1000, // 500 МБ
-);
 
   final _telephony = TelephonyService();
   final _permissions = PermissionService();
@@ -98,6 +95,9 @@ final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
   bool _downloading = false;
   String? _downloadStatus;
   String? _downloadError;
+
+  /// Спидтест (во время записи трека).
+  bool _speedTesting = false;
 
   /// Heatmap собственных замеров.
   List<CircleMarker> _measurementCircles = [];
@@ -827,6 +827,47 @@ final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
         CellkaMapMode.scheme => 'Схема',
       };
 
+  /// Спидтест: только во время записи — результат привязывается к треку.
+  Future<void> _runSpeedTest() async {
+    if (_speedTesting) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (!_recorder.isRecording) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text(
+          'Спидтест доступен во время записи трека — '
+          'результат привяжется к месту',
+        ),
+      ));
+      return;
+    }
+    setState(() => _speedTesting = true);
+    try {
+      final r = await SpeedTestService.run();
+      final pos = _recorder.lastPosition;
+      await TrackRepository().insertSpeedTest(
+        trackId: _recorder.activeTrackId!,
+        downMbps: r.downMbps,
+        pingMs: r.pingMs,
+        server: r.server,
+        lat: pos?.latitude,
+        lon: pos?.longitude,
+        accuracy: pos?.accuracy,
+      );
+      messenger.showSnackBar(SnackBar(
+        content: Text(
+          'Спидтест: ${r.downMbps.toStringAsFixed(1)} Мбит/с'
+          '${r.pingMs != null ? ' · ${r.pingMs!.round()} мс' : ''}',
+        ),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Спидтест не удался: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _speedTesting = false);
+    }
+  }
+
   Future<void> _requestPermissions() async {
     if (await _permissions.isPermanentlyDenied) {
       await _permissions.openSettings();
@@ -876,26 +917,17 @@ final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
                 TileLayer(
                   urlTemplate: _osmScheme,
                   userAgentPackageName: 'com.github.davidgo134.cellka',
-                  tileProvider: NetworkTileProvider(
-                    cachingProvider: _tileCaching,
-                  ),
                 )
               else ...[
                 TileLayer(
                   urlTemplate: _esriImagery,
                   userAgentPackageName: 'com.github.davidgo134.cellka',
-                  tileProvider: NetworkTileProvider(
-                    cachingProvider: _tileCaching,
-                  ),
                   maxZoom: 19,
                 ),
                 if (_mode == CellkaMapMode.hybrid)
                   TileLayer(
                     urlTemplate: _esriLabels,
                     userAgentPackageName: 'com.github.davidgo134.cellka',
-                  tileProvider: NetworkTileProvider(
-                    cachingProvider: _tileCaching,
-                  ),
                     maxZoom: 19,
                   ),
               ],
@@ -1129,6 +1161,19 @@ final _tileCaching = BuiltInMapCachingProvider.getOrCreateInstance(
               child: Icon(
                 _isRecording ? Icons.stop : Icons.fiber_manual_record,
               ),
+            ),
+            const SizedBox(height: 12),
+            FloatingActionButton.small(
+              heroTag: 'speed',
+              tooltip: 'Спидтест (во время записи)',
+              onPressed: _runSpeedTest,
+              child: _speedTesting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.speed),
             ),
             const SizedBox(height: 12),
             FloatingActionButton.small(

@@ -30,6 +30,12 @@ class RecordingService extends ChangeNotifier {
   bool _recording = false;
   String? _trackId;
 
+  /// Текущий трек (null — запись не идёт). Для привязки спидтеста.
+  String? get activeTrackId => _trackId;
+
+  /// Последняя известная позиция записи (для привязки спидтеста).
+  Position? get lastPosition => _lastPos;
+
   StreamSubscription<Position>? _posSub;
   StreamSubscription<List<CellInfo>>? _cellSub;
   Timer? _flushTimer;

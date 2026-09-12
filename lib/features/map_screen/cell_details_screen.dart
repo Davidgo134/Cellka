@@ -43,6 +43,9 @@ class CellDetailsScreen extends StatelessWidget {
     'rssi': 'Общая мощность на частоте, включая шум и чужие сигналы.',
     'sinr': 'Соотношение сигнал/шум. Выше 20 dB — отлично, '
         'ниже 0 — помехи съедают скорость.',
+    'ca': 'Оценка агрегации по соседям: если рядом сильная LTE-сота ' +
+        'на другом диапазоне, телефон вероятно суммирует каналы (CA). '
+        'Android не отдаёт CA напрямую — это эвристика.',
     'ta': 'Timing Advance — примерная дальность до вышки: '
         '1 единица ≈ 78 метров.',
   };
@@ -189,6 +192,7 @@ class CellDetailsScreen extends StatelessWidget {
         _row(context, 'Ширина канала',
             '${(bw / 1000).toStringAsFixed(0)} МГц',
             explain: 'bw'),
+      ..._caRow(context, c, band),
     ];
   }
 
@@ -204,6 +208,26 @@ class CellDetailsScreen extends StatelessWidget {
       if (c.ta != null)
         _row(context, 'Timing Advance', '${c.ta}',
             explain: 'ta'),
+    ];
+  }
+
+  /// CA-оценка (эвристика): сильные LTE-соседи на других диапазонах —
+  /// типичный признак carrier aggregation. Android API CA не отдаёт.
+  List<Widget> _caRow(BuildContext context, CellInfo c, int? band) {
+    final others = <int>{};
+    for (final n in allCells) {
+      if (n.registered || n.technology != 'LTE') continue;
+      if (n.band == null || n.band == band) continue;
+      if ((n.rsrp ?? -140) > -105) others.add(n.band!);
+    }
+    if (others.isEmpty || band == null) return const [];
+    return [
+      _row(
+        context,
+        'Агрегация (оценка)',
+        'вероятна: B$band + ${others.map((b) => 'B$b').join(' + ')}',
+        explain: 'ca',
+      ),
     ];
   }
 
